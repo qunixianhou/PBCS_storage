@@ -44,7 +44,8 @@ public class EncThread extends Thread {
     public void run() {
         try {
             encryptFilePart(partNum, partSize, sourcePath, destPath, key);
-            indexList.add(partNum); // 成功后记录分片索引
+            indexList.add(partNum);
+            logger.log("Encryption completed for part " + partNum + " at " + destPath + "EncPart" + partNum);
         } catch (Exception e) {
             logger.log("EncThread Error", "Failed to encrypt file part " + partNum + ": " + e.getMessage());
             throw new RuntimeException("Encryption failed for part " + partNum, e);

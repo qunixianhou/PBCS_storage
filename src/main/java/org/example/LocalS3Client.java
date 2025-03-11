@@ -113,29 +113,29 @@ public class LocalS3Client {
 
     public void putObject(PutObjectRequest request) {
         try {
-            Path bucketPath = Paths.get(baseDirectory, request.getBucketName());
+            Path bucketPath = Paths.get(baseDirectory, request.getBucketName()).normalize();
             Files.createDirectories(bucketPath);
-            Path targetPath = bucketPath.resolve(request.getKey());
+            Path targetPath = bucketPath.resolve(request.getKey()).normalize();
             Files.createDirectories(targetPath.getParent());
 
             if (request.getFile() != null) {
-                // 处理 File 输入
-                Files.copy(request.getFile().toPath(), targetPath,
-                        StandardCopyOption.REPLACE_EXISTING);
+                Files.copy(request.getFile().toPath(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+                System.out.println("LocalS3: Put object to " + targetPath + " (size: " + Files.size(targetPath) + " bytes)");
             } else if (request.getInputStream() != null) {
-                // 处理 InputStream 输入
-                try (OutputStream out = Files.newOutputStream(targetPath)) {
+                try (InputStream in = request.getInputStream();
+                     OutputStream out = Files.newOutputStream(targetPath)) {
                     byte[] buffer = new byte[8192];
                     int bytesRead;
-                    while ((bytesRead = request.getInputStream().read(buffer)) != -1) {
+                    long totalBytes = 0;
+                    while ((bytesRead = in.read(buffer)) != -1) {
                         out.write(buffer, 0, bytesRead);
+                        totalBytes += bytesRead;
                     }
+                    System.out.println("LocalS3: Put object to " + targetPath + " (size: " + totalBytes + " bytes)");
                 }
             } else {
                 throw new IllegalArgumentException("No valid input provided for putObject");
             }
-
-            System.out.println("LocalS3: Put object to " + targetPath);
         } catch (IOException e) {
             throw new RuntimeException("Failed to put object locally", e);
         }
@@ -143,7 +143,7 @@ public class LocalS3Client {
 
     public S3Object getObject(GetObjectRequest request) {
         try {
-            Path filePath = Paths.get(baseDirectory, request.getBucketName(), request.getKey());
+            Path filePath = Paths.get(baseDirectory, request.getBucketName(), request.getKey()).normalize();
             File file = filePath.toFile();
 
             if (!file.exists()) {

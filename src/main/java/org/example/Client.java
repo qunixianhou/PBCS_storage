@@ -24,25 +24,23 @@ public class Client {
     public final String bucketName;
     private final String localS3Path;
     private static final boolean verbose = true;
-    private final String userID; // 添加 userID 字段
+    private String secureRetFilePath;
+    private String internalCipherFilePath;
+    private String plainFilePath;
+    private String optSecureRetFilePath;
+    private String encryptionFilePath;
+    private String decryptionFilePath;
+    private final String userID;
 
-    private static String internalCipherFilePath = Constants.FILE_PATH + "internal";
-    private static String plainFilePath = Constants.FILE_PATH + "plain";
-    private static String secureRetFilePath = Constants.FILE_PATH + "secureRetrieve";
-    private static String optSecureRetFilePath = Constants.FILE_PATH + "optSecureRetrieve";
-    private static String decryptionFilePath = Constants.FILE_PATH + "decryption";
-    private static String encryptionFilePath;
-    private static String getUserFilePath(String basePath, String userID) {
-        return basePath + File.separator + userID;
-    }
     SimpleEcCurve curve = new SimpleEcCurve(Constants.CURVE_NAME);
 
     public interface Logger {
         void log(String tag, String message);
+
         void log(String message);
     }
-
-    public Client(String bucketName, String localS3Path) {
+    // 修改构造函数，支持传入 userID
+    public Client(String bucketName, String localS3Path, String userID) {
         this(SocketFactory.getDefault(), new Logger() {
             @Override
             public void log(String message) {
@@ -52,27 +50,22 @@ public class Client {
             public void log(String tag, String message) {
                 log(tag + ": " + message);
             }
-        }, Constants.KDF_HASH_REPETITIONS, bucketName, localS3Path);
+        }, Constants.KDF_HASH_REPETITIONS, bucketName, localS3Path, userID);
     }
 
-    public Client(SocketFactory socketFactory, Logger logger, int kdmHashRepetitions, String bucketName, String localS3Path) {
+    public Client(SocketFactory socketFactory, Logger logger, int kdfHashRepetitions, String bucketName, String localS3Path, String userID) {
         this.socketFactory = socketFactory;
         this.logger = logger;
-        this.kdfHashRepetitions = kdmHashRepetitions;
+        this.kdfHashRepetitions = kdfHashRepetitions;
         this.bucketName = bucketName;
         this.localS3Path = localS3Path;
-        // 初始化 userID
-        byte[] randomBytes = new byte[10];
-        new Random().nextBytes(randomBytes);
-        this.userID = "username" + Utils.bytesToHex(randomBytes);
-        // 动态生成文件路径
-        internalCipherFilePath = Constants.FILE_PATH + userID + "/internal";
-        plainFilePath = Constants.FILE_PATH + userID + "/plain";
-        secureRetFilePath = Constants.FILE_PATH + userID + "/secureRetrieve";
-        optSecureRetFilePath = Constants.FILE_PATH + userID + "/optSecureRetrieve";
-        encryptionFilePath = Constants.FILE_PATH + userID + "/encryption";
-        decryptionFilePath = Constants.FILE_PATH + userID + "/decryption";
-
+        this.userID = userID; // 使用用户提供的 userID
+        this.secureRetFilePath = Constants.FILE_PATH + userID + "/secureRetrieve";
+        this.internalCipherFilePath = Constants.FILE_PATH + userID + "/internal";
+        this.plainFilePath = Constants.FILE_PATH + userID + "/plain";
+        this.optSecureRetFilePath = Constants.FILE_PATH + userID + "/optSecureRetrieve";
+        this.encryptionFilePath = Constants.FILE_PATH + userID + "/encryption";
+        this.decryptionFilePath = Constants.FILE_PATH + userID + "/decryption";
     }
 
     private void ensureDirectoryExists(String filePath) {
@@ -85,15 +78,12 @@ public class Client {
             }
         }
     }
-    public void start(String sourceFilePath) throws Exception {
-        byte[] randomBytes = new byte[10];
-        Random rand = new Random();
-        rand.nextBytes(randomBytes);
-        String passphrase = "passphrase" + Utils.bytesToHex(randomBytes);
+    // 修改 start 方法，接受 passphrase 参数
+    public void start(String sourceFilePath, String passphrase) throws Exception {
         String key0 = userID + "/sid";
         String key1 = userID + "/rid";
         String key2 = userID + "/optimizedEncryptedFile";
-        String key3 = userID + "/plianFile";
+        String key3 = userID + "/plainFile";
         String key4 = userID + "/oneThreadEncryptedFile";
 
         byte[] msk, mskr;
@@ -101,132 +91,62 @@ public class Client {
         String hardenedPWD, hardenedPWD1;
 
         // 1. 密码硬化
-        try {
-            if (verbose) logger.log("PASSWORD HARDENING PROTOCOL");
-            hardenedPWD = ibOPRF(userID, passphrase);
-        } catch (Exception e) {
-            logger.log("Error in password hardening", e.getMessage());
-            throw new Exception("Password hardening failed", e);
-        }
+        if (verbose) logger.log("PASSWORD HARDENING PROTOCOL");
+        hardenedPWD = ibOPRF(userID, passphrase);
 
         // 2. 注册
-        try {
-            register(userID, passphrase, bucketName, key0);
-        } catch (Exception e) {
-            logger.log("Error in registration", e.getMessage());
-            throw new Exception("Registration failed", e);
-        }
+        register(userID, passphrase, bucketName, key0);
 
         // 3. 再次密码硬化
-        try {
-            if (verbose) logger.log("PASSWORD HARDENING PROTOCOL");
-            hardenedPWD = ibOPRF(userID, passphrase);
-        } catch (Exception e) {
-            logger.log("Error in second password hardening", e.getMessage());
-            throw new Exception("Second password hardening failed", e);
-        }
+        if (verbose) logger.log("PASSWORD HARDENING PROTOCOL");
+        hardenedPWD = ibOPRF(userID, passphrase);
 
         // 4. 密钥存款
-        try {
-            if (verbose) logger.log("KEY DEPOSIT PROTOCOL");
-            msk = give(userID, passphrase, bucketName, key1, key0);
-        } catch (Exception e) {
-            logger.log("Error in key deposit", e.getMessage());
-            throw new Exception("Key deposit failed", e);
-        }
+        if (verbose) logger.log("KEY DEPOSIT PROTOCOL");
+        msk = give(userID, passphrase, bucketName, key1, key0);
 
         // 5. 加密并上传文件（优化版本）
-        try {
-            if (verbose) logger.log("ENCRYPT AND UPLOAD FILE");
-            partNum = secureDepositOptimization(bucketName, key2, msk, sourceFilePath);
-        } catch (Exception e) {
-            logger.log("Error in optimized file encryption/upload", e.getMessage());
-            throw new Exception("Optimized file encryption/upload failed", e);
-        }
+        if (verbose) logger.log("ENCRYPT AND UPLOAD FILE");
+        partNum = secureDepositOptimization(bucketName, key2, msk, sourceFilePath);
 
         // 6. 再次密码硬化
-        try {
-            if (verbose) logger.log("PASSWORD HARDENING PROTOCOL");
-            hardenedPWD1 = ibOPRF(userID, passphrase);
-        } catch (Exception e) {
-            logger.log("Error in third password hardening", e.getMessage());
-            throw new Exception("Third password hardening failed", e);
-        }
+        if (verbose) logger.log("PASSWORD HARDENING PROTOCOL");
+        hardenedPWD1 = ibOPRF(userID, passphrase);
 
         // 7. 密钥检索
-        try {
-            if (verbose) logger.log("KEY RETRIEVAL PROTOCOL\n");
-            mskr = take(userID, passphrase, bucketName, key1, key0);
-            if (!Arrays.equals(msk, mskr)) {
-                throw new Exception("msk does not match mskr");
-            }
-        } catch (Exception e) {
-            logger.log("Error in key retrieval", e.getMessage());
-            throw new Exception("Key retrieval failed", e);
+        if (verbose) logger.log("KEY RETRIEVAL PROTOCOL\n");
+        mskr = take(userID, passphrase, bucketName, key1, key0);
+        if (!Arrays.equals(msk, mskr)) {
+            throw new Exception("msk does not match mskr");
         }
 
-        // 8. 检索并解密文件（优化版本）
-        try {
-            if (verbose) logger.log("RETRIEVE AND DEC FILE");
-            secureRetrieveOptimization(partNum, bucketName, key2, mskr, optSecureRetFilePath);
-        } catch (Exception e) {
-            logger.log("Error in optimized file retrieval/decryption", e.getMessage());
-            throw new Exception("Optimized file retrieval/decryption failed", e);
-        }
+        // 8. 下载加密文件（优化版本）
+        if (verbose) logger.log("RETRIEVE ENCRYPTED FILE");
+        secureRetrieveOptimization(partNum, bucketName, key2, optSecureRetFilePath);
 
         // 9. 加密并上传文件（单线程版本）
-        try {
-            if (verbose) logger.log("ENCRYPT AND UPLOAD FILE");
-            secureDeposit(bucketName, key4, msk, sourceFilePath, internalCipherFilePath);
-        } catch (Exception e) {
-            logger.log("Error in single-thread file encryption/upload", e.getMessage());
-            throw new Exception("Single-thread file encryption/upload failed", e);
-        }
+        if (verbose) logger.log("ENCRYPT AND UPLOAD FILE");
+        secureDeposit(bucketName, key4, msk, sourceFilePath, internalCipherFilePath + "singleThreadEncryptedFile");
 
-        // 10. 检索并解密文件（单线程版本）
-        try {
-            if (verbose) logger.log("RETRIEVE AND DEC FILE\n");
-            secureRetrieve(bucketName, key4, mskr, secureRetFilePath);
-        } catch (Exception e) {
-            logger.log("Error in single-thread file retrieval/decryption", e.getMessage());
-            throw new Exception("Single-thread file retrieval/decryption failed", e);
-        }
+        // 10. 下载加密文件（单线程版本）
+        if (verbose) logger.log("RETRIEVE ENCRYPTED FILE");
+        secureRetrieve(bucketName, key4, secureRetFilePath);
 
         // 11. 上传明文文件
-        try {
-            if (verbose) logger.log("UPLOAD PLAIN FILE\n");
-            depositPlainFile(bucketName, key3, sourceFilePath);
-        } catch (Exception e) {
-            logger.log("Error in plain file upload", e.getMessage());
-            throw new Exception("Plain file upload failed", e);
-        }
+        if (verbose) logger.log("UPLOAD PLAIN FILE\n");
+        depositPlainFile(bucketName, key3, sourceFilePath);
 
         // 12. 检索明文文件
-        try {
-            if (verbose) logger.log("RETRIEVE PLAIN FILE");
-            retrievePlainBigFile(bucketName, key3, plainFilePath);
-        } catch (Exception e) {
-            logger.log("Error in plain file retrieval", e.getMessage());
-            throw new Exception("Plain file retrieval failed", e);
-        }
+        if (verbose) logger.log("RETRIEVE PLAIN FILE");
+        retrievePlainBigFile(bucketName, key3, plainFilePath);
 
         // 13. 加密明文文件
-        try {
-            if (verbose) logger.log("Encrypt PLAIN FILE");
-            encryptCTRBigFile(sourceFilePath, encryptionFilePath, msk);
-        } catch (Exception e) {
-            logger.log("Error in plain file encryption", e.getMessage());
-            throw new Exception("Plain file encryption failed", e);
-        }
+        if (verbose) logger.log("Encrypt PLAIN FILE");
+        encryptCTRBigFile(sourceFilePath, encryptionFilePath, msk);
 
         // 14. 解密密文文件
-        try {
-            if (verbose) logger.log("Decrypt CT FILE");
-            decryptCTRBigFile(encryptionFilePath, decryptionFilePath, mskr);
-        } catch (Exception e) {
-            logger.log("Error in ciphertext decryption", e.getMessage());
-            throw new Exception("Ciphertext decryption failed", e);
-        }
+        if (verbose) logger.log("Decrypt CT FILE");
+        decryptCTRBigFile(encryptionFilePath, decryptionFilePath, mskr);
 
         // 15. 检查硬化密码一致性
         if (!hardenedPWD1.equals(hardenedPWD)) {
@@ -544,9 +464,41 @@ public class Client {
         }
     }
 
-    public void secureRetrieve(String bucketName, String key2, byte[] sKey, String desPath)
-            throws NoSuchPaddingException, NoSuchAlgorithmException, InvalidAlgorithmParameterException,
-            InvalidKeyException, BadPaddingException, IllegalBlockSizeException, IOException {
+    public void secureRetrieve(String bucketName, String key2, String encryptedFilePath) throws IOException {
+        if (verbose) {
+            logger.log("Retrieving encrypted file from S3 bucket " + bucketName + " with key " + key2);
+        }
+        try {
+            final LocalS3Client s3 = LocalS3Client.Builder.standard()
+                    .withBaseDirectory(this.localS3Path)
+                    .build();
+            s3.setBucketAccelerateConfiguration(new LocalS3Client.SetBucketAccelerateConfigurationRequest(bucketName,
+                    new LocalS3Client.BucketAccelerateConfiguration("Enabled")));
+
+            LocalS3Client.S3Object object = s3.getObject(new LocalS3Client.GetObjectRequest(bucketName, key2));
+            InputStream s3is = object.getObjectContent();
+
+            ensureDirectoryExists(encryptedFilePath);
+            try (FileOutputStream fos = new FileOutputStream(encryptedFilePath)) {
+                byte[] buffer = new byte[1024];
+                int bytesRead;
+                int totalBytes = 0;
+                while ((bytesRead = s3is.read(buffer)) != -1) {
+                    fos.write(buffer, 0, bytesRead);
+                    totalBytes += bytesRead;
+                }
+                if (verbose) {
+                    logger.log("Encrypted file downloaded, " + totalBytes + " bytes saved to " + encryptedFilePath);
+                }
+            }
+            s3is.close();
+        } catch (Exception e) {
+            logger.log("Error in secureRetrieve", "Failed to retrieve file: " + e.getMessage());
+            throw e instanceof IOException ? (IOException) e : new IOException(e);
+        }
+    }
+
+    public void secureRetrieveOptimization(int partNum, String bucketName, String key2, String encryptedFilePathPrefix) throws IOException {
         if (verbose) {
             System.out.format("Retrieving from S3 bucket %s...\n", bucketName);
         }
@@ -557,37 +509,27 @@ public class Client {
             s3.setBucketAccelerateConfiguration(new LocalS3Client.SetBucketAccelerateConfigurationRequest(bucketName,
                     new LocalS3Client.BucketAccelerateConfiguration("Enabled")));
 
-            if (verbose) {
-                System.out.println("Retrieve File from bucket " + bucketName);
-                System.out.println("Retrieve parameter\n");
+            ensureDirectoryExists(encryptedFilePathPrefix + "Part1");
+
+            for (int index = 1; index <= partNum; index++) {
+                String partKey = key2 + "/part" + index;
+                String encryptedPartPath = encryptedFilePathPrefix + "Part" + index;
+                LocalS3Client.S3Object object = s3.getObject(new LocalS3Client.GetObjectRequest(bucketName, partKey));
+                try (InputStream s3is = object.getObjectContent();
+                     FileOutputStream fos = new FileOutputStream(encryptedPartPath)) {
+                    byte[] buffer = new byte[1024];
+                    int bytesRead;
+                    while ((bytesRead = s3is.read(buffer)) != -1) {
+                        fos.write(buffer, 0, bytesRead);
+                    }
+                }
+                if (verbose) {
+                    logger.log("Encrypted file part " + index + " saved to " + encryptedPartPath);
+                }
             }
-
-            LocalS3Client.S3Object object = s3.getObject(new LocalS3Client.GetObjectRequest(bucketName, key2));
-            InputStream s3is = object.getObjectContent();
-
-            byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
-            s3is.read(iv);
-            Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
-            SecretKey keyEncryptionKey = new SecretKeySpec(sKey, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
-            cipher.init(Cipher.DECRYPT_MODE, keyEncryptionKey, new IvParameterSpec(iv));
-
-            // 调用 ensureDirectoryExists 确保目录存在
-            ensureDirectoryExists(desPath);
-            FileOutputStream fos = new FileOutputStream(desPath);
-
-            int index;
-            byte[] buffer = new byte[1024];
-            while ((index = s3is.read(buffer)) != -1) {
-                byte[] dec = cipher.update(buffer, 0, index);
-                fos.write(dec);
-            }
-            byte[] dec = cipher.doFinal();
-            fos.write(dec);
-            s3is.close();
-            fos.close();
         } catch (Exception e) {
             System.out.println("Error in local S3 operation: " + e.getMessage());
-            throw e;
+            throw e instanceof IOException ? (IOException) e : new IOException(e);
         }
     }
 
@@ -639,43 +581,6 @@ public class Client {
         }
     }
 
-    public void secureRetrieveOptimization(int partNum, String bucketName, String key2, byte[] sKey, String desPath) throws IOException {
-        List<InputStream> decList = new CopyOnWriteArrayList<>();
-        if (verbose) {
-            System.out.format("Retrieving from S3 bucket %s...\n", bucketName);
-        }
-        try {
-            final LocalS3Client s3 = LocalS3Client.Builder.standard()
-                    .withBaseDirectory(this.localS3Path)
-                    .build();
-            s3.setBucketAccelerateConfiguration(new LocalS3Client.SetBucketAccelerateConfigurationRequest(bucketName,
-                    new LocalS3Client.BucketAccelerateConfiguration("Enabled")));
-
-            Thread decThread = new StreamDecThread(decList, internalCipherFilePath, desPath, sKey, partNum);
-            decThread.start();
-            int index = 0;
-            InputStream[] s3isset = new InputStream[partNum];
-            while (index < partNum) {
-                index++;
-                String partKey = key2 + "/part" + index;
-                LocalS3Client.S3Object object = s3.getObject(new LocalS3Client.GetObjectRequest(bucketName, partKey));
-                s3isset[index - 1] = object.getObjectContent();
-                decList.add(s3isset[index - 1]);
-            }
-            try {
-                decThread.join();
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-            for (int i = 0; i < partNum; i++) {
-                s3isset[i].close();
-            }
-        } catch (Exception e) {
-            System.out.println("Error in local S3 operation: " + e.getMessage());
-            throw e instanceof IOException ? (IOException) e : new IOException(e);
-        }
-    }
-
     private static File createFileFromByte(byte[] input) throws IOException {
         File file = File.createTempFile("aws-java-sdk-", ".txt", null);
         file.deleteOnExit();
@@ -707,5 +612,105 @@ public class Client {
         out.write(dec);
         in.close();
         out.close();
+    }
+    public void view(String passphrase) throws Exception {
+        String key0 = userID + "/sid";
+        String key1 = userID + "/rid";
+
+        // 检查单线程加密文件是否存在
+        File secureFile = new File(secureRetFilePath);
+        File optSecureFilePart1 = new File(optSecureRetFilePath + "Part1");
+
+        if (secureFile.exists()) {
+            if (verbose) logger.log("Viewing single-threaded encrypted file: " + secureRetFilePath);
+            viewSecureFile(userID, passphrase, bucketName, key1, key0, secureRetFilePath);
+        } else if (optSecureFilePart1.exists()) {
+            // 计算分片数量
+            int partNum = 0;
+            while (new File(optSecureRetFilePath + "Part" + (partNum + 1)).exists()) {
+                partNum++;
+            }
+            if (partNum == 0) {
+                throw new Exception("No parts found for encrypted file prefix: " + optSecureRetFilePath);
+            }
+            if (verbose) logger.log("Detected " + partNum + " parts for encrypted file: " + optSecureRetFilePath);
+            viewSecureFileOptimization(userID, passphrase, bucketName, key1, key0, optSecureRetFilePath, partNum);
+        } else {
+            throw new Exception("No encrypted files found for user ID: " + userID);
+        }
+    }
+
+    // Existing viewSecureFile method (already implemented in your provided code)
+    public void viewSecureFile(String userID, String passphrase, String bucketName, String key1, String key0, String encryptedFilePath)
+            throws Exception {
+        // 1. 获取密钥
+        byte[] mskr = take(userID, passphrase, bucketName, key1, key0);
+        if (mskr == null) {
+            throw new Exception("Failed to retrieve key for user " + userID);
+        }
+
+        // 2. 读取并在内存中解密文件
+        try (InputStream encryptedStream = new FileInputStream(encryptedFilePath)) {
+            Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
+            SecretKey keyEncryptionKey = new SecretKeySpec(mskr, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
+            byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
+            encryptedStream.read(iv); // 读取 IV
+            cipher.init(Cipher.DECRYPT_MODE, keyEncryptionKey, new IvParameterSpec(iv));
+
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+            while ((bytesRead = encryptedStream.read(buffer)) != -1) {
+                byte[] decryptedData = cipher.update(buffer, 0, bytesRead);
+                System.out.write(decryptedData, 0, decryptedData.length);
+            }
+            byte[] finalData = cipher.doFinal();
+            System.out.write(finalData, 0, finalData.length);
+            System.out.println(); // 换行
+        }
+
+        // 3. 清理密钥
+        Utils.destroyPasskey(mskr);
+    }
+
+    // Existing viewSecureFileOptimization method (already implemented in your provided code)
+    public void viewSecureFileOptimization(String userID, String passphrase, String bucketName, String key1, String key0,
+                                           String encryptedFilePathPrefix, int partNum)
+            throws Exception {
+        // 1. 获取密钥
+        byte[] mskr = take(userID, passphrase, bucketName, key1, key0);
+        if (mskr == null) {
+            throw new Exception("Failed to retrieve key for user " + userID);
+        }
+
+        // 2. 依次读取并解密每个分片
+        if (verbose) {
+            logger.log("Viewing secure file parts from " + encryptedFilePathPrefix);
+        }
+        for (int index = 1; index <= partNum; index++) {
+            String encryptedPartPath = encryptedFilePathPrefix + "Part" + index;
+            try (InputStream encryptedStream = new FileInputStream(encryptedPartPath)) {
+                Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
+                SecretKey keyEncryptionKey = new SecretKeySpec(mskr, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
+                byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
+                encryptedStream.read(iv); // 读取 IV
+                cipher.init(Cipher.DECRYPT_MODE, keyEncryptionKey, new IvParameterSpec(iv));
+
+                byte[] buffer = new byte[1024];
+                int bytesRead;
+                while ((bytesRead = encryptedStream.read(buffer)) != -1) {
+                    byte[] decryptedData = cipher.update(buffer, 0, bytesRead);
+                    System.out.write(decryptedData, 0, decryptedData.length);
+                }
+                byte[] finalData = cipher.doFinal();
+                System.out.write(finalData, 0, finalData.length);
+            }
+            if (verbose) {
+                logger.log("Processed part " + index + " of " + partNum);
+            }
+        }
+        System.out.println(); // 换行
+
+        // 3. 清理密钥
+        Utils.destroyPasskey(mskr);
     }
 }
