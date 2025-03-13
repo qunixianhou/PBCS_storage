@@ -713,4 +713,23 @@ public class Client {
         // 3. 清理密钥
         Utils.destroyPasskey(mskr);
     }
+    public byte[] decryptCTRBigFileToBytes(String sourcePath, byte[] key) throws Exception {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
+        SecretKey keyEncryptionKey = new SecretKeySpec(key, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
+        try (InputStream in = new FileInputStream(sourcePath)) {
+            byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
+            in.read(iv);
+            cipher.init(Cipher.DECRYPT_MODE, keyEncryptionKey, new IvParameterSpec(iv));
+            byte[] buffer = new byte[1024 * 1024];
+            int index;
+            while ((index = in.read(buffer)) != -1) {
+                byte[] dec = cipher.update(buffer, 0, index);
+                baos.write(dec);
+            }
+            byte[] dec = cipher.doFinal();
+            baos.write(dec);
+        }
+        return baos.toByteArray();
+    }
 }
