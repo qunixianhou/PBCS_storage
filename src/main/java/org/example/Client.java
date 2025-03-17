@@ -94,8 +94,10 @@ public class Client {
         if (verbose) logger.log("PASSWORD HARDENING PROTOCOL");
         hardenedPWD = ibOPRF(userID, passphrase);
 
-        // 2. 注册
-        register(userID, passphrase, bucketName, key0);
+        // 2. 如果已注册，跳过注册步骤
+        if (! AuthServer.getInstance().isUserRegistered(userID)) {
+            register(userID, passphrase, bucketName, key0);
+        }
 
         // 3. 再次密码硬化
         if (verbose) logger.log("PASSWORD HARDENING PROTOCOL");
@@ -731,5 +733,49 @@ public class Client {
             baos.write(dec);
         }
         return baos.toByteArray();
+    }
+    public byte[] viewDecrypted(String passphrase) throws Exception {
+        String key0 = userID + "/sid";
+        String key1 = userID + "/rid";
+
+        // 检查单线程加密文件或分片文件是否存在
+        File secureFile = new File(secureRetFilePath);
+        File optSecureFilePart1 = new File(optSecureRetFilePath + "Part1");
+
+        if (secureFile.exists()) {
+            if (verbose) logger.log("Viewing single-threaded encrypted file: " + secureRetFilePath);
+            return decryptCTRBigFileToBytes(secureRetFilePath, take(userID, passphrase, bucketName, key1, key0));
+        } else if (optSecureFilePart1.exists()) {
+            // 计算分片数量
+            int partNum = 0;
+            while (new File(optSecureRetFilePath + "Part" + (partNum + 1)).exists()) {
+                partNum++;
+            }
+            if (partNum == 0) {
+                throw new Exception("No parts found for encrypted file prefix: " + optSecureRetFilePath);
+            }
+            if (verbose) logger.log("Detected " + partNum + " parts for encrypted file: " + optSecureRetFilePath);
+            return viewDecryptedOptimization(passphrase, key1, key0, optSecureFilePart1.getParent(), partNum);
+        } else {
+            throw new Exception("No encrypted files found for user ID: " + userID);
+        }
+    }
+
+    private byte[] viewDecryptedOptimization(String passphrase, String key1, String key0, String encryptedFilePathPrefix, int partNum) throws Exception {
+        byte[] mskr = take(userID, passphrase, bucketName, key1, key0);
+        if (mskr == null) {
+            throw new Exception("Failed to retrieve key for user " + userID);
+        }
+
+        ByteArrayOutputStream decryptedStream = new ByteArrayOutputStream();
+        for (int index = 1; index <= partNum; index++) {
+            String encryptedPartPath = encryptedFilePathPrefix + "Part" + index;
+            byte[] partContent = decryptCTRBigFileToBytes(encryptedPartPath, mskr);
+            decryptedStream.write(partContent);
+            if (verbose) logger.log("Processed part " + index + " of " + partNum);
+        }
+
+        Utils.destroyPasskey(mskr);
+        return decryptedStream.toByteArray();
     }
 }

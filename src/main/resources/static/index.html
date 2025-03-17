@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>文件加密与认证系统</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            max-width: 800px;
+        }
+        .container {
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 8px 15px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        input[type="text"], input[type="password"] {
+            padding: 5px;
+            margin: 5px;
+            width: 200px;
+        }
+        #result, #decryptedContent {
+            margin-top: 15px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .error {
+            color: red;
+        }
+        .success {
+            color: green;
+        }
+        #userList, #decryptedContent {
+            margin-top: 10px;
+        }
+        #decryptedContent {
+            white-space: pre-wrap; /* 保留换行和空格 */
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+<h2>文件加密与认证系统</h2>
+
+<div class="container">
+    <h3>用户认证</h3>
+    <input type="text" id="userId" placeholder="用户ID">
+    <input type="password" id="passphrase" placeholder="密码">
+    <button id="authBtn">认证</button>
+</div>
+
+<div class="container">
+    <h3>已注册用户</h3>
+    <button id="checkUsersBtn">查询已注册用户</button>
+    <div id="userList"></div>
+</div>
+
+<div class="container">
+    <h3>上传并加密文件</h3>
+    <input type="file" id="fileInput">
+    <button id="uploadBtn">上传</button>
+</div>
+
+<div class="container">
+    <h3>查看加密文件</h3>
+    <button id="viewBtn">查看（控制台）</button>
+    <button id="viewDecryptedBtn">查看解密内容</button>
+</div>
+
+<div id="result"></div>
+<div id="decryptedContent"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

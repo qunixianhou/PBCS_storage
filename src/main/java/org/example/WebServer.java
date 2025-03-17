@@ -1,49 +1,50 @@
 package org.example;
 
 import static spark.Spark.*;
-
-import java.net.URL;
+import java.io.InputStream;
 
 public class WebServer {
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         port(8080);
 
-        // 调试类路径资源
-        URL appJsUrl = WebServer.class.getResource("/static/app.js");
-        System.out.println("app.js URL: " + appJsUrl);
-        if (appJsUrl == null) {
-            System.err.println("Error: /static/app.js not found in classpath!");
-        } else {
-            System.out.println("app.js content exists: " + (WebServer.class.getResourceAsStream("/static/app.js") != null));
-        }
+        serveStaticFiles();
+        ApiController.initRoutes();
 
-        // 配置静态文件
-        staticFiles.location("/static"); // 从类路径加载 /static
-        System.out.println("Static files configured at: /static");
-
-        // 手动测试静态文件访问
-        get("/static/app.js", (req, res) -> {
-            res.type("application/javascript");
-            byte[] content = WebServer.class.getResourceAsStream("/static/app.js").readAllBytes();
-            if (content == null || content.length == 0) {
-                res.status(404);
-                return "File not found";
+        Thread authServerThread = new Thread(() -> {
+            try {
+                AuthServer authServer = AuthServer.getInstance();
+                System.out.println("Starting AuthServer...");
+                authServer.start();
+            } catch (Exception e) {
+                System.err.println("AuthServer failed: " + e.getMessage());
+                e.printStackTrace();
             }
-            return content;
         });
+        authServerThread.setDaemon(true);
+        authServerThread.start();
 
-        // 根路径返回 index.html
+        System.out.println("WebServer started at http://localhost:8080");
+    }
+
+    private static void serveStaticFiles() {
         get("/", (req, res) -> {
             res.type("text/html");
-            byte[] content = WebServer.class.getResourceAsStream("/static/index.html").readAllBytes();
-            if (content == null || content.length == 0) {
+            InputStream inputStream = WebServer.class.getResourceAsStream("/static/index.html");
+            if (inputStream == null) {
                 res.status(404);
-                return "Index not found";
+                return "index.html not found";
             }
-            return content;
+            return new String(inputStream.readAllBytes());
         });
 
-        // 测试路由
-        get("/test", (req, res) -> "Hello, World!");
+        get("/static/app.js", (req, res) -> {
+            res.type("application/javascript");
+            InputStream inputStream = WebServer.class.getResourceAsStream("/static/app.js");
+            if (inputStream == null) {
+                res.status(404);
+                return "app.js not found";
+            }
+            return new String(inputStream.readAllBytes());
+        });
     }
 }
