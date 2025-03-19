@@ -3,20 +3,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const resultDiv = document.getElementById('result');
     const decryptedContentDiv = document.getElementById('decryptedContent');
+    const backendLogsDiv = document.getElementById('backendLogs');
+    const backendWindow = document.getElementById('backendWindow');
     const authBtn = document.getElementById('authBtn');
     const uploadBtn = document.getElementById('uploadBtn');
     const viewBtn = document.getElementById('viewBtn');
     const viewDecryptedBtn = document.getElementById('viewDecryptedBtn');
     const checkUsersBtn = document.getElementById('checkUsersBtn');
     const userListDiv = document.getElementById('userList');
+    const showBackendBtn = document.getElementById('showBackendBtn');
+    const closeBackendBtn = document.getElementById('closeBackendBtn');
 
     let isAuthenticated = false;
     let currentUserId = null;
+
+    // WebSocket 连接
+    const ws = new WebSocket('ws://localhost:8080/logs');
+    ws.onmessage = (event) => {
+        backendLogsDiv.textContent += event.data + '\n';
+        backendLogsDiv.scrollTop = backendLogsDiv.scrollHeight; // 自动滚动到底部
+    };
+    ws.onerror = (error) => console.error('WebSocket 错误:', error);
+    ws.onclose = () => console.log('WebSocket 连接关闭');
 
     function showResult(message, isError = false) {
         resultDiv.textContent = message;
         resultDiv.className = isError ? 'error' : 'success';
     }
+
+    // 显示/隐藏后台窗口
+    showBackendBtn.addEventListener('click', () => {
+        backendWindow.style.display = 'block';
+    });
+    closeBackendBtn.addEventListener('click', () => {
+        backendWindow.style.display = 'none';
+    });
 
     authBtn.addEventListener('click', async () => {
         const userId = document.getElementById('userId').value;
@@ -105,15 +126,22 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        showResult('正在查看文件内容...');
+        showResult('正在查看加密内容...');
+        decryptedContentDiv.textContent = ''; // 清空之前的内容
         try {
             const response = await fetch('/api/view', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `userId=${encodeURIComponent(currentUserId)}&passphrase=${encodeURIComponent(document.getElementById('passphrase').value)}`
             });
-            const data = await response.json();
-            showResult(data.message, !response.ok);
+            if (response.ok) {
+                const encryptedText = await response.text(); // 获取加密内容
+                decryptedContentDiv.textContent = encryptedText; // 显示加密内容
+                showResult('加密内容查看成功');
+            } else {
+                const data = await response.json();
+                showResult(data.message, true);
+            }
         } catch (error) {
             showResult('查看错误: ' + error.message, true);
         }
@@ -126,7 +154,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         showResult('正在解密并查看文件内容...');
-        decryptedContentDiv.textContent = ''; // 清空之前的内容
+        decryptedContentDiv.textContent = '';
         try {
             const response = await fetch('/api/viewDecrypted', {
                 method: 'POST',

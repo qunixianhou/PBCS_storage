@@ -15,6 +15,16 @@
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>org.eclipse.jetty.websocket</groupId>
+            <artifactId>websocket-api</artifactId>
+            <version>9.4.53.v20231009</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jetty.websocket</groupId>
+            <artifactId>websocket-server</artifactId>
+            <version>9.4.53.v20231009</version>
+        </dependency>
         <!-- Spark Java -->
         <dependency>
             <groupId>com.sparkjava</groupId>
