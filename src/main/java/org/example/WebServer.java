@@ -89,13 +89,13 @@ public class WebServer {
     @OnWebSocketConnect
     public void onConnect(Session session) {
         sessions.add(session);
-        log("WebSocket client connected: " + session.getRemoteAddress().getAddress() + ", total sessions: " + sessions.size());
+        log("WebSocket", "Connected", "Client connected: " + session.getRemoteAddress().getAddress());
         // 发送历史日志
         for (String log : logQueue) {
             try {
                 session.getRemote().sendString(log);
             } catch (Exception e) {
-                log("Failed to send log to client: " + e.getMessage());
+                log("WebSocket", "Error", "Failed to send log to client: " + e.getMessage());
             }
         }
     }
@@ -103,13 +103,26 @@ public class WebServer {
     @OnWebSocketClose
     public void onClose(Session session, int statusCode, String reason) {
         sessions.remove(session);
-        log("WebSocket client disconnected: " + session.getRemoteAddress().getAddress() + ", reason: " + reason);
+        log("WebSocket", "Disconnected", "Client disconnected: " + session.getRemoteAddress().getAddress() + ", reason: " + reason);
     }
 
     @OnWebSocketMessage
     public void onMessage(Session session, String message) {
-        log("Received message from client: " + message);
-        // 可选：处理前端发送的消息
+        log("WebSocket", "Message", "Received from client: " + message);
+    }
+    // 统一日志方法
+    public static void log(String component, String status, String description) {
+        String logMessage = String.format("[%s] %s %s", component, status, description);
+        System.out.println(logMessage); // 输出到控制台
+        logQueue.add(logMessage);
+        broadcastLog(logMessage);
+    }
+    // 重载方法，带用户ID
+    public static void log(String userId, String operation, String status, String description) {
+        String logMessage = String.format("[%s] %s %s %s", userId, operation, status, description);
+        System.out.println(logMessage); // 输出到控制台
+        logQueue.add(logMessage);
+        broadcastLog(logMessage);
     }
 
     private static void broadcastLog(String log) {

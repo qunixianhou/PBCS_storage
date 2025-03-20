@@ -738,7 +738,6 @@ public class Client {
         String key0 = userID + "/sid";
         String key1 = userID + "/rid";
 
-        // 检查单线程加密文件或分片文件是否存在
         File secureFile = new File(secureRetFilePath);
         File optSecureFilePart1 = new File(optSecureRetFilePath + "Part1");
 
@@ -746,7 +745,6 @@ public class Client {
             if (verbose) logger.log("Viewing single-threaded encrypted file: " + secureRetFilePath);
             return decryptCTRBigFileToBytes(secureRetFilePath, take(userID, passphrase, bucketName, key1, key0));
         } else if (optSecureFilePart1.exists()) {
-            // 计算分片数量
             int partNum = 0;
             while (new File(optSecureRetFilePath + "Part" + (partNum + 1)).exists()) {
                 partNum++;

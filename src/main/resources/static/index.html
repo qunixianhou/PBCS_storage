@@ -16,6 +16,7 @@
         #backendWindow { display: none; position: fixed; top: 50px; right: 20px; width: 400px; height: 500px; background: white; border: 1px solid #ccc; padding: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
         #backendWindow h3 { margin: 0 0 10px 0; }
         #closeBackendBtn { float: right; }
+        #imagePreview { margin-top: 15px; max-width: 100%; display: none; } /* 新增样式 */
     </style>
 </head>
 <body>
@@ -37,7 +38,7 @@
 
 <div class="container">
     <h3>上传并加密文件</h3>
-    <input type="file" id="fileInput">
+    <input type="file" id="fileInput" accept="image/*,.txt"> <!-- 支持图片和文本 -->
     <button id="uploadBtn">上传</button>
 </div>
 
@@ -49,6 +50,7 @@
 
 <div id="result"></div>
 <div id="decryptedContent"></div>
+<img id="imagePreview" alt="解密后的图片预览"> <!-- 新增图片预览元素 -->
 
 <div id="backendWindow">
     <h3>后台日志 <button id="closeBackendBtn">关闭</button></h3>
