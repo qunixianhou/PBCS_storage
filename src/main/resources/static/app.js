@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentUserId = null;
 
     // WebSocket 连接
-    const ws = new WebSocket('ws://localhost:8080/logs');
+    let ws = new WebSocket('ws://localhost:8080/logs');
     ws.onmessage = (event) => {
         backendLogsDiv.textContent += event.data + '\n';
         backendLogsDiv.scrollTop = backendLogsDiv.scrollHeight; // 自动滚动到底部
@@ -65,6 +65,23 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             showResult('认证错误: ' + error.message, true);
+        }
+
+        if (response.ok) {
+            isAuthenticated = true;
+            currentUserId = userId;
+            showResult(data.message);
+            // 检查 WebSocket 状态并重新连接
+            if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+                console.log('Reconnecting WebSocket...');
+                ws = new WebSocket('ws://localhost:8080/logs');
+                ws.onmessage = (event) => {
+                    backendLogsDiv.textContent += event.data + '\n';
+                    backendLogsDiv.scrollTop = backendLogsDiv.scrollHeight;
+                };
+                ws.onerror = (error) => console.error('WebSocket 错误:', error);
+                ws.onclose = () => console.log('WebSocket 连接关闭');
+            }
         }
     });
 

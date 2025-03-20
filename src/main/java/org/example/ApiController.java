@@ -14,7 +14,7 @@ import java.util.List;
 import static spark.Spark.*;
 
 public class ApiController {
-    private static final Gson gson = new Gson();
+    static final Gson gson = new Gson();
     private static final String BUCKET_NAME = "test-bucket";
     private static final String LOCAL_S3_PATH = "DataFile/local-s3";
 

@@ -1,9 +1,12 @@
 package org.example;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import org.bouncycastle.math.ec.ECPoint;
+import org.eclipse.jetty.server.RequestLog;
 
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
+import java.lang.reflect.Type;
 import java.math.BigInteger;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -11,17 +14,20 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static org.example.ApiController.gson;
+
 public class AuthServer {
+    private static final String USERS_REG_FILE = "local-s3/usersReg.json";
+    private static final String USERS_REC_FILE = "local-s3/usersRec.json";
     private static final boolean verbose = true;
     private static AuthServer instance;
     final private static SimpleEcCurve SIMPLE_EC_CURVE = new SimpleEcCurve(Constants.CURVE_NAME);
     final private static String mSecretKey = "addd";
-
-    // 使用 ConcurrentHashMap 确保线程安全
-    private final ConcurrentHashMap<String, UserRecord> usersRec = new ConcurrentHashMap<>();
-    final ConcurrentHashMap<String, UserRegister> usersReg = new ConcurrentHashMap<>();
+    public Map<String, UserRegister> usersReg = new ConcurrentHashMap<>();
+    private Map<String, UserRecord> usersRec = new ConcurrentHashMap<>();
 
     class UserRecord {
         byte[] tao, ct;
@@ -56,6 +62,8 @@ public class AuthServer {
     }
 
     public void start() throws Exception {
+        loadUsersRegFromFile();
+        loadUsersRecFromFile();
         String msg = "AuthServer starting on port " + Constants.AUTH_SERVER_PORT_NUMBER + "...";
         System.out.println(msg);
 
@@ -102,6 +110,8 @@ public class AuthServer {
                             clientSocket.getOutputStream().write(Constants.RESP_TYPE_ERROR);
                         } else {
                             usersReg.put(userID, new UserRegister(t));
+                            saveUsersRegToFile();
+
                             if (verbose) System.out.println("Register for " + userID + " succeeded.");
                             clientSocket.getOutputStream().write(Constants.RESP_TYPE_OK);
                         }
@@ -215,5 +225,36 @@ public class AuthServer {
         List<String> users = new ArrayList<>(usersReg.keySet());
         System.out.println("Registered users in AuthServer: " + users);
         return users;
+    }
+    private void saveUsersRegToFile() {
+        try (Writer writer = new FileWriter(USERS_REG_FILE)) {
+            gson.toJson(usersReg, writer);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+    private void saveUsersRecToFile() {
+        try (Writer writer = new FileWriter(USERS_REC_FILE)) {
+            gson.toJson(usersRec, writer);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+    private void loadUsersRegFromFile() {
+        try (Reader reader = new FileReader(USERS_REG_FILE)) {
+            Type type = new TypeToken<Map<String, UserRegister>>(){}.getType();
+            usersReg = gson.fromJson(reader, type);
+        } catch (IOException e) {
+            usersReg = new ConcurrentHashMap<>();
+        }
+    }
+
+    private void loadUsersRecFromFile() {
+        try (Reader reader = new FileReader(USERS_REC_FILE)) {
+            Type type = new TypeToken<Map<String, UserRecord>>(){}.getType();
+            usersRec = gson.fromJson(reader, type);
+        } catch (IOException e) {
+            usersRec = new ConcurrentHashMap<>();
+        }
     }
 }

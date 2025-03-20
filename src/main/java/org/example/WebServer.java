@@ -2,6 +2,7 @@ package org.example;
 
 import static spark.Spark.*;
 import java.io.InputStream;
+import java.util.Iterator;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import org.eclipse.jetty.websocket.api.Session;
@@ -88,7 +89,7 @@ public class WebServer {
     @OnWebSocketConnect
     public void onConnect(Session session) {
         sessions.add(session);
-        log("WebSocket client connected: " + session.getRemoteAddress().getAddress());
+        log("WebSocket client connected: " + session.getRemoteAddress().getAddress() + ", total sessions: " + sessions.size());
         // 发送历史日志
         for (String log : logQueue) {
             try {
@@ -112,13 +113,17 @@ public class WebServer {
     }
 
     private static void broadcastLog(String log) {
-        for (Session session : sessions) {
+        Iterator<Session> iterator = sessions.iterator();
+        while (iterator.hasNext()) {
+            Session session = iterator.next();
             try {
                 if (session.isOpen()) {
                     session.getRemote().sendString(log);
+                } else {
+                    iterator.remove(); // 移除已关闭的会话
                 }
             } catch (Exception e) {
-                log("Failed to broadcast log: " + e.getMessage());
+                log("Failed to broadcast log to session: " + e.getMessage());
             }
         }
     }
