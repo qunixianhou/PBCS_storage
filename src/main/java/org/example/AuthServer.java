@@ -21,7 +21,7 @@ public class AuthServer {
 
     // 使用 ConcurrentHashMap 确保线程安全
     private final ConcurrentHashMap<String, UserRecord> usersRec = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, UserRegister> usersReg = new ConcurrentHashMap<>();
+    final ConcurrentHashMap<String, UserRegister> usersReg = new ConcurrentHashMap<>();
 
     class UserRecord {
         byte[] tao, ct;
@@ -203,7 +203,12 @@ public class AuthServer {
     public boolean authenticateUser(String userId, String passphrase) throws Exception {
         UserRegister user = usersReg.get(userId);
         if (user == null) return false;
-        return true; // 占位符，需实现具体验证逻辑
+
+        Client tempClient = new Client("temp-bucket", "DataFile/local-s3", userId);
+        String hardenedPWD = tempClient.ibOPRF(userId, passphrase);
+        byte[] computedT = Utils.KDF(tempClient.take(userId, passphrase, "temp-bucket", userId + "/rid", userId + "/sid"),
+                passphrase, Constants.KDF1_SALT, Constants.MAC_KEY_LENGTH, Constants.KDF_HASH_REPETITIONS);
+        return Arrays.equals(computedT, user.t);
     }
 
     public List<String> getRegisteredUserIds() {

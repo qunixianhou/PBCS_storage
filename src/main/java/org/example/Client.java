@@ -373,7 +373,7 @@ public class Client {
         SecretKey keyEncryptionKey = new SecretKeySpec(k1, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
         cipher.init(Cipher.DECRYPT_MODE, keyEncryptionKey, new GCMParameterSpec(Constants.GCM_TAG_LENGTH, iv));
         byte[] mskr = cipher.doFinal(ct);
-
+        System.out.println("Retrieved mskr: " + Utils.bytesToHex(mskr));
         authServerSock.close();
         return mskr;
     }

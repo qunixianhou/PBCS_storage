@@ -125,7 +125,8 @@ document.addEventListener('DOMContentLoaded', () => {
             showResult('请先认证', true);
             return;
         }
-
+        const passphrase = document.getElementById('passphrase').value;
+        console.log('Viewing encrypted file with passphrase:', passphrase); // 添加调试日志
         showResult('正在查看加密内容...');
         decryptedContentDiv.textContent = ''; // 清空之前的内容
         try {
