@@ -3,7 +3,6 @@ package org.example;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import org.bouncycastle.math.ec.ECPoint;
-import org.eclipse.jetty.server.RequestLog;
 
 import java.io.*;
 import java.lang.reflect.Type;
@@ -59,6 +58,18 @@ public class AuthServer {
             }
         }
         return instance;
+    }
+
+    // 添加 main 方法
+    public static void main(String[] args) {
+        AuthServer server = getInstance();
+        try {
+            server.start();
+        } catch (Exception e) {
+            System.err.println("AuthServer failed to start: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
     }
 
     public void start() throws Exception {
@@ -226,6 +237,7 @@ public class AuthServer {
         System.out.println("Registered users in AuthServer: " + users);
         return users;
     }
+
     private void saveUsersRegToFile() {
         try (Writer writer = new FileWriter(USERS_REG_FILE)) {
             gson.toJson(usersReg, writer);
@@ -233,6 +245,7 @@ public class AuthServer {
             e.printStackTrace();
         }
     }
+
     private void saveUsersRecToFile() {
         try (Writer writer = new FileWriter(USERS_REC_FILE)) {
             gson.toJson(usersRec, writer);
@@ -240,6 +253,7 @@ public class AuthServer {
             e.printStackTrace();
         }
     }
+
     private void loadUsersRegFromFile() {
         try (Reader reader = new FileReader(USERS_REG_FILE)) {
             Type type = new TypeToken<Map<String, UserRegister>>(){}.getType();

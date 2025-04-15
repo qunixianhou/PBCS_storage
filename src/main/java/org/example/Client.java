@@ -36,10 +36,9 @@ public class Client {
 
     public interface Logger {
         void log(String tag, String message);
-
         void log(String message);
     }
-    // 修改构造函数，支持传入 userID
+
     public Client(String bucketName, String localS3Path, String userID) {
         this(SocketFactory.getDefault(), new Logger() {
             @Override
@@ -59,7 +58,7 @@ public class Client {
         this.kdfHashRepetitions = kdfHashRepetitions;
         this.bucketName = bucketName;
         this.localS3Path = localS3Path;
-        this.userID = userID; // 使用用户提供的 userID
+        this.userID = userID;
         this.secureRetFilePath = Constants.FILE_PATH + userID + "/secureRetrieve";
         this.internalCipherFilePath = Constants.FILE_PATH + userID + "/internal";
         this.plainFilePath = Constants.FILE_PATH + userID + "/plain";
@@ -78,7 +77,7 @@ public class Client {
             }
         }
     }
-    // 修改 start 方法，接受 passphrase 参数
+
     public void start(String sourceFilePath, String passphrase) throws Exception {
         String key0 = userID + "/sid";
         String key1 = userID + "/rid";
@@ -95,7 +94,7 @@ public class Client {
         hardenedPWD = ibOPRF(userID, passphrase);
 
         // 2. 如果已注册，跳过注册步骤
-        if (! AuthServer.getInstance().isUserRegistered(userID)) {
+        if (!AuthServer.getInstance().isUserRegistered(userID)) {
             register(userID, passphrase, bucketName, key0);
         }
 
@@ -124,7 +123,7 @@ public class Client {
 
         // 8. 下载加密文件（优化版本）
         if (verbose) logger.log("RETRIEVE ENCRYPTED FILE");
-        secureRetrieveOptimization(partNum, bucketName, key2, optSecureRetFilePath);
+        secureRetrieveOptimization(partNum, bucketName, key2, optSecureRetFilePath, mskr);
 
         // 9. 加密并上传文件（单线程版本）
         if (verbose) logger.log("ENCRYPT AND UPLOAD FILE");
@@ -134,23 +133,25 @@ public class Client {
         if (verbose) logger.log("RETRIEVE ENCRYPTED FILE");
         secureRetrieve(bucketName, key4, secureRetFilePath);
 
-        // 11. 上传明文文件
-        if (verbose) logger.log("UPLOAD PLAIN FILE\n");
-        depositPlainFile(bucketName, key3, sourceFilePath);
 
-        // 12. 检索明文文件
-        if (verbose) logger.log("RETRIEVE PLAIN FILE");
-        retrievePlainBigFile(bucketName, key3, plainFilePath);
-
-        // 13. 加密明文文件
+        // 11. 加密明文文件
         if (verbose) logger.log("Encrypt PLAIN FILE");
-        encryptCTRBigFile(sourceFilePath, encryptionFilePath, msk);
+        // 生成数据密钥并加密
+        KeyGenerator kgen = KeyGenerator.getInstance("AES");
+        kgen.init(128);
+        byte[] dataKey = kgen.generateKey().getEncoded();
+        Cipher keyCipher = Cipher.getInstance("AES/GCM/NoPadding");
+        SecretKey mskKey = new SecretKeySpec(msk, "AES");
+        keyCipher.init(Cipher.ENCRYPT_MODE, mskKey);
+        byte[] encryptedDataKey = keyCipher.doFinal(dataKey);
+        byte[] keyIv = keyCipher.getIV();
+        encryptCTRBigFile(sourceFilePath, encryptionFilePath, dataKey, encryptedDataKey, keyIv);
 
-        // 14. 解密密文文件
+        // 12. 解密密文文件
         if (verbose) logger.log("Decrypt CT FILE");
         decryptCTRBigFile(encryptionFilePath, decryptionFilePath, mskr);
 
-        // 15. 检查硬化密码一致性
+        // 13. 检查硬化密码一致性
         if (!hardenedPWD1.equals(hardenedPWD)) {
             logger.log("The hardened password is " + hardenedPWD + " and " + hardenedPWD1);
         }
@@ -378,92 +379,62 @@ public class Client {
         return mskr;
     }
 
-    public void depositPlainFile(String bucketName, String key3, String sourceFilePath) {
-        try {
-            final LocalS3Client s3 = LocalS3Client.Builder.standard()
-                    .withBaseDirectory(this.localS3Path)
-                    .build();
-            s3.setBucketAccelerateConfiguration(new LocalS3Client.SetBucketAccelerateConfigurationRequest(bucketName,
-                    new LocalS3Client.BucketAccelerateConfiguration("Enabled")));
-            s3.putObject(new LocalS3Client.PutObjectRequest(bucketName, key3, new File(sourceFilePath)));
-        } catch (Exception e) {
-            System.out.println("Error in local S3 operation: " + e.getMessage());
-            throw e;
-        }
+
+    public void secureDeposit(String bucketName, String key2, byte[] msk, String sourceFilePath, String internalCipherFilePath)
+            throws Exception {
+        KeyGenerator kgen = KeyGenerator.getInstance("AES");
+        kgen.init(128);
+        byte[] dataKey = kgen.generateKey().getEncoded();
+        Cipher keyCipher = Cipher.getInstance("AES/GCM/NoPadding");
+        SecretKey mskKey = new SecretKeySpec(msk, "AES");
+        keyCipher.init(Cipher.ENCRYPT_MODE, mskKey);
+        byte[] encryptedDataKey = keyCipher.doFinal(dataKey);
+        byte[] keyIv = keyCipher.getIV();
+
+        encryptCTRBigFile(sourceFilePath, internalCipherFilePath, dataKey, encryptedDataKey, keyIv);
+        final LocalS3Client s3 = LocalS3Client.Builder.standard()
+                .withBaseDirectory(this.localS3Path)
+                .build();
+        s3.setBucketAccelerateConfiguration(new LocalS3Client.SetBucketAccelerateConfigurationRequest(bucketName,
+                new LocalS3Client.BucketAccelerateConfiguration("Enabled")));
+        s3.putObject(new LocalS3Client.PutObjectRequest(bucketName, key2, new File(internalCipherFilePath)));
     }
 
-    public void retrievePlainBigFile(String bucketName, String key3, String plainFilePath) throws IOException {
-        try {
-            final LocalS3Client s3 = LocalS3Client.Builder.standard()
-                    .withBaseDirectory(this.localS3Path)
-                    .build();
-            s3.setBucketAccelerateConfiguration(new LocalS3Client.SetBucketAccelerateConfigurationRequest(bucketName,
-                    new LocalS3Client.BucketAccelerateConfiguration("Enabled")));
-            LocalS3Client.S3Object object = s3.getObject(new LocalS3Client.GetObjectRequest(bucketName, key3));
-            InputStream s3is = object.getObjectContent();
-            FileOutputStream fos = new FileOutputStream(plainFilePath);
-            byte[] read_buf = new byte[1024];
-            int read_len = 0;
-            while ((read_len = s3is.read(read_buf)) != -1) {
-                fos.write(read_buf, 0, read_len);
-            }
-            s3is.close();
-            fos.close();
-        } catch (Exception e) {
-            System.out.println("Error in local S3 operation: " + e.getMessage());
-            throw e instanceof IOException ? (IOException) e : new IOException(e);
-        }
-    }
-
-    public void secureDeposit(String bucketName, String key2, byte[] sKey, String sourceFilePath, String internalCipherFilePath)
+    public void encryptCTRBigFile(String sourcePath, String desPath, byte[] dataKey, byte[] encryptedDataKey, byte[] keyIv)
             throws NoSuchPaddingException, NoSuchAlgorithmException, InvalidAlgorithmParameterException,
             InvalidKeyException, BadPaddingException, IllegalBlockSizeException, IOException {
-        try {
-            encryptCTRBigFile(sourceFilePath, internalCipherFilePath, sKey);
-            final LocalS3Client s3 = LocalS3Client.Builder.standard()
-                    .withBaseDirectory(this.localS3Path)
-                    .build();
-            s3.setBucketAccelerateConfiguration(new LocalS3Client.SetBucketAccelerateConfigurationRequest(bucketName,
-                    new LocalS3Client.BucketAccelerateConfiguration("Enabled")));
-            s3.putObject(new LocalS3Client.PutObjectRequest(bucketName, key2, new File(internalCipherFilePath)));
-        } catch (Exception e) {
-            System.out.println("Error in local S3 operation: " + e.getMessage());
-            throw e;
-        }
-    }
+        Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
+        SecretKey keyEncryptionKey = new SecretKeySpec(dataKey, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
+        SecureRandom secureRandom = new SecureRandom();
+        byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
+        secureRandom.nextBytes(iv);
+        IvParameterSpec ivParameterSpec = new IvParameterSpec(iv);
 
-    public void encryptCTRBigFile(String sourcePath, String desPath, byte[] key)
-            throws NoSuchPaddingException, NoSuchAlgorithmException, InvalidAlgorithmParameterException,
-            InvalidKeyException, BadPaddingException, IllegalBlockSizeException, IOException {
-        try {
-            Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
-            SecretKey keyEncryptionKey = new SecretKeySpec(key, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
-            SecureRandom secureRandom = new SecureRandom();
-            byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
-            secureRandom.nextBytes(iv);
-            IvParameterSpec ivParameterSpec = new IvParameterSpec(iv);
+        cipher.init(Cipher.ENCRYPT_MODE, keyEncryptionKey, ivParameterSpec);
 
-            cipher.init(Cipher.ENCRYPT_MODE, keyEncryptionKey, ivParameterSpec);
+        byte[] buffer = new byte[1024 * 1024];
+        InputStream in = new FileInputStream(sourcePath);
 
-            byte[] buffer = new byte[1024 * 1024];
-            InputStream in = new FileInputStream(sourcePath);
+        ensureDirectoryExists(desPath);
+        OutputStream out = new FileOutputStream(desPath);
 
-            ensureDirectoryExists(desPath);
-            OutputStream out = new FileOutputStream(desPath);
+        // 写入加密的数据密钥和其 IV
+        out.write(keyIv.length);
+        out.write(keyIv);
+        out.write(encryptedDataKey.length);
+        out.write(encryptedDataKey);
 
-            int index;
-            out.write(iv);
-            while ((index = in.read(buffer)) != -1) {
-                byte[] enc = cipher.update(buffer, 0, index);
-                out.write(enc);
-            }
-            byte[] enc = cipher.doFinal();
+        // 写入文件 IV 和加密数据
+        out.write(iv);
+        int index;
+        while ((index = in.read(buffer)) != -1) {
+            byte[] enc = cipher.update(buffer, 0, index);
             out.write(enc);
-            in.close();
-            out.close();
-        } catch (IOException e) {
-            throw new IOException("Failed to encrypt file to " + desPath, e);
         }
+        byte[] enc = cipher.doFinal();
+        out.write(enc);
+        in.close();
+        out.close();
     }
 
     public void secureRetrieve(String bucketName, String key2, String encryptedFilePath) throws IOException {
@@ -500,7 +471,7 @@ public class Client {
         }
     }
 
-    public void secureRetrieveOptimization(int partNum, String bucketName, String key2, String encryptedFilePathPrefix) throws IOException {
+    public void secureRetrieveOptimization(int partNum, String bucketName, String key2, String encryptedFilePathPrefix, byte[] msk) throws IOException {
         if (verbose) {
             System.out.format("Retrieving from S3 bucket %s...\n", bucketName);
         }
@@ -535,8 +506,7 @@ public class Client {
         }
     }
 
-    public int secureDepositOptimization(String bucketName, String key2, byte[] sKey, String sourceFilePath) throws IOException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException,
-            InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException{
+    public int secureDepositOptimization(String bucketName, String key2, byte[] msk, String sourceFilePath) throws Exception {
         int partSize;
         int partNumber;
         List<Integer> indexList = new CopyOnWriteArrayList<>();
@@ -549,7 +519,22 @@ public class Client {
         }
 
         List<Integer> encList = new CopyOnWriteArrayList<>();
-        Thread threadEnc = new EncThread(encList, partNumber, partSize, sourceFilePath, internalCipherFilePath, sKey);
+        // 为每个分片生成数据密钥
+        byte[][] dataKeys = new byte[partNumber][];
+        byte[][] encryptedDataKeys = new byte[partNumber][];
+        byte[][] keyIvs = new byte[partNumber][];
+        Cipher keyCipher = Cipher.getInstance("AES/GCM/NoPadding");
+        SecretKey mskKey = new SecretKeySpec(msk, "AES");
+        for (int i = 0; i < partNumber; i++) {
+            KeyGenerator kgen = KeyGenerator.getInstance("AES");
+            kgen.init(128);
+            dataKeys[i] = kgen.generateKey().getEncoded();
+            keyCipher.init(Cipher.ENCRYPT_MODE, mskKey);
+            encryptedDataKeys[i] = keyCipher.doFinal(dataKeys[i]);
+            keyIvs[i] = keyCipher.getIV();
+        }
+
+        Thread threadEnc = new EncThread(encList, partNumber, partSize, sourceFilePath, internalCipherFilePath, dataKeys, encryptedDataKeys, keyIvs);
         threadEnc.start();
 
         uploadFilePartsToS3(encList, partNumber, internalCipherFilePath, bucketName, key2);
@@ -593,18 +578,33 @@ public class Client {
         return file;
     }
 
-    public static void decryptCTRBigFile(String sourcePath, String desPath, byte[] key)
-            throws NoSuchPaddingException, NoSuchAlgorithmException, InvalidAlgorithmParameterException, InvalidKeyException, BadPaddingException, IllegalBlockSizeException, IOException {
-        byte[] buffer = new byte[1024 * 1024];
+    public void decryptCTRBigFile(String sourcePath, String desPath, byte[] msk)
+            throws Exception {
+        Cipher keyCipher = Cipher.getInstance("AES/GCM/NoPadding");
+        SecretKey mskKey = new SecretKeySpec(msk, "AES");
+
         InputStream in = new FileInputStream(sourcePath);
-        OutputStream out = new FileOutputStream(desPath);
+        // 读取加密的数据密钥
+        int keyIvLen = in.read();
+        byte[] keyIv = new byte[keyIvLen];
+        in.read(keyIv);
+        int encKeyLen = in.read();
+        byte[] encryptedDataKey = new byte[encKeyLen];
+        in.read(encryptedDataKey);
+
+        // 解密数据密钥
+        keyCipher.init(Cipher.DECRYPT_MODE, mskKey, new GCMParameterSpec(Constants.GCM_TAG_LENGTH, keyIv));
+        byte[] dataKey = keyCipher.doFinal(encryptedDataKey);
+
+        // 解密文件
+        Cipher cipher = Cipher.getInstance("AES/CTR/NoPadding");
+        SecretKey dataKeySpec = new SecretKeySpec(dataKey, "AES");
         byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
         in.read(iv);
+        cipher.init(Cipher.DECRYPT_MODE, dataKeySpec, new IvParameterSpec(iv));
 
-        Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
-        SecretKey keyEncryptionKey = new SecretKeySpec(key, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
-        cipher.init(Cipher.DECRYPT_MODE, keyEncryptionKey, new IvParameterSpec(iv));
-
+        OutputStream out = new FileOutputStream(desPath);
+        byte[] buffer = new byte[1024 * 1024];
         int index;
         while ((index = in.read(buffer)) != -1) {
             byte[] dec = cipher.update(buffer, 0, index);
@@ -615,11 +615,11 @@ public class Client {
         in.close();
         out.close();
     }
+
     public void view(String passphrase) throws Exception {
         String key0 = userID + "/sid";
         String key1 = userID + "/rid";
 
-        // 检查单线程加密文件是否存在
         File secureFile = new File(secureRetFilePath);
         File optSecureFilePart1 = new File(optSecureRetFilePath + "Part1");
 
@@ -627,7 +627,6 @@ public class Client {
             if (verbose) logger.log("Viewing single-threaded encrypted file: " + secureRetFilePath);
             viewSecureFile(userID, passphrase, bucketName, key1, key0, secureRetFilePath);
         } else if (optSecureFilePart1.exists()) {
-            // 计算分片数量
             int partNum = 0;
             while (new File(optSecureRetFilePath + "Part" + (partNum + 1)).exists()) {
                 partNum++;
@@ -642,22 +641,31 @@ public class Client {
         }
     }
 
-    // Existing viewSecureFile method (already implemented in your provided code)
     public void viewSecureFile(String userID, String passphrase, String bucketName, String key1, String key0, String encryptedFilePath)
             throws Exception {
-        // 1. 获取密钥
         byte[] mskr = take(userID, passphrase, bucketName, key1, key0);
         if (mskr == null) {
             throw new Exception("Failed to retrieve key for user " + userID);
         }
 
-        // 2. 读取并在内存中解密文件
         try (InputStream encryptedStream = new FileInputStream(encryptedFilePath)) {
+            Cipher keyCipher = Cipher.getInstance("AES/GCM/NoPadding");
+            SecretKey mskKey = new SecretKeySpec(mskr, "AES");
+            int keyIvLen = encryptedStream.read();
+            byte[] keyIv = new byte[keyIvLen];
+            encryptedStream.read(keyIv);
+            int encKeyLen = encryptedStream.read();
+            byte[] encryptedDataKey = new byte[encKeyLen];
+            encryptedStream.read(encryptedDataKey);
+
+            keyCipher.init(Cipher.DECRYPT_MODE, mskKey, new GCMParameterSpec(Constants.GCM_TAG_LENGTH, keyIv));
+            byte[] dataKey = keyCipher.doFinal(encryptedDataKey);
+
             Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
-            SecretKey keyEncryptionKey = new SecretKeySpec(mskr, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
+            SecretKey dataKeySpec = new SecretKeySpec(dataKey, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
             byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
-            encryptedStream.read(iv); // 读取 IV
-            cipher.init(Cipher.DECRYPT_MODE, keyEncryptionKey, new IvParameterSpec(iv));
+            encryptedStream.read(iv);
+            cipher.init(Cipher.DECRYPT_MODE, dataKeySpec, new IvParameterSpec(iv));
 
             byte[] buffer = new byte[1024];
             int bytesRead;
@@ -667,35 +675,43 @@ public class Client {
             }
             byte[] finalData = cipher.doFinal();
             System.out.write(finalData, 0, finalData.length);
-            System.out.println(); // 换行
+            System.out.println();
         }
 
-        // 3. 清理密钥
         Utils.destroyPasskey(mskr);
     }
 
-    // Existing viewSecureFileOptimization method (already implemented in your provided code)
     public void viewSecureFileOptimization(String userID, String passphrase, String bucketName, String key1, String key0,
                                            String encryptedFilePathPrefix, int partNum)
             throws Exception {
-        // 1. 获取密钥
         byte[] mskr = take(userID, passphrase, bucketName, key1, key0);
         if (mskr == null) {
             throw new Exception("Failed to retrieve key for user " + userID);
         }
 
-        // 2. 依次读取并解密每个分片
         if (verbose) {
             logger.log("Viewing secure file parts from " + encryptedFilePathPrefix);
         }
         for (int index = 1; index <= partNum; index++) {
             String encryptedPartPath = encryptedFilePathPrefix + "Part" + index;
             try (InputStream encryptedStream = new FileInputStream(encryptedPartPath)) {
+                Cipher keyCipher = Cipher.getInstance("AES/GCM/NoPadding");
+                SecretKey mskKey = new SecretKeySpec(mskr, "AES");
+                int keyIvLen = encryptedStream.read();
+                byte[] keyIv = new byte[keyIvLen];
+                encryptedStream.read(keyIv);
+                int encKeyLen = encryptedStream.read();
+                byte[] encryptedDataKey = new byte[encKeyLen];
+                encryptedStream.read(encryptedDataKey);
+
+                keyCipher.init(Cipher.DECRYPT_MODE, mskKey, new GCMParameterSpec(Constants.GCM_TAG_LENGTH, keyIv));
+                byte[] dataKey = keyCipher.doFinal(encryptedDataKey);
+
                 Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
-                SecretKey keyEncryptionKey = new SecretKeySpec(mskr, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
+                SecretKey dataKeySpec = new SecretKeySpec(dataKey, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
                 byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
-                encryptedStream.read(iv); // 读取 IV
-                cipher.init(Cipher.DECRYPT_MODE, keyEncryptionKey, new IvParameterSpec(iv));
+                encryptedStream.read(iv);
+                cipher.init(Cipher.DECRYPT_MODE, dataKeySpec, new IvParameterSpec(iv));
 
                 byte[] buffer = new byte[1024];
                 int bytesRead;
@@ -710,19 +726,33 @@ public class Client {
                 logger.log("Processed part " + index + " of " + partNum);
             }
         }
-        System.out.println(); // 换行
+        System.out.println();
 
-        // 3. 清理密钥
         Utils.destroyPasskey(mskr);
     }
-    public byte[] decryptCTRBigFileToBytes(String sourcePath, byte[] key) throws Exception {
+
+    public byte[] decryptCTRBigFileToBytes(String sourcePath, byte[] msk) throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
-        SecretKey keyEncryptionKey = new SecretKeySpec(key, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
+        Cipher keyCipher = Cipher.getInstance("AES/GCM/NoPadding");
+        SecretKey mskKey = new SecretKeySpec(msk, "AES");
+
         try (InputStream in = new FileInputStream(sourcePath)) {
+            int keyIvLen = in.read();
+            byte[] keyIv = new byte[keyIvLen];
+            in.read(keyIv);
+            int encKeyLen = in.read();
+            byte[] encryptedDataKey = new byte[encKeyLen];
+            in.read(encryptedDataKey);
+
+            keyCipher.init(Cipher.DECRYPT_MODE, mskKey, new GCMParameterSpec(Constants.GCM_TAG_LENGTH, keyIv));
+            byte[] dataKey = keyCipher.doFinal(encryptedDataKey);
+
+            Cipher cipher = Cipher.getInstance("AES/CTR/NoPadding");
+            SecretKey dataKeySpec = new SecretKeySpec(dataKey, "AES");
             byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
             in.read(iv);
-            cipher.init(Cipher.DECRYPT_MODE, keyEncryptionKey, new IvParameterSpec(iv));
+            cipher.init(Cipher.DECRYPT_MODE, dataKeySpec, new IvParameterSpec(iv));
+
             byte[] buffer = new byte[1024 * 1024];
             int index;
             while ((index = in.read(buffer)) != -1) {
@@ -734,6 +764,7 @@ public class Client {
         }
         return baos.toByteArray();
     }
+
     public byte[] viewDecrypted(String passphrase) throws Exception {
         String key0 = userID + "/sid";
         String key1 = userID + "/rid";

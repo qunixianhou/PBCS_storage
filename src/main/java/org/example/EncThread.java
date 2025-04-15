@@ -12,22 +12,26 @@ import java.util.Arrays;
 import java.util.List;
 
 public class EncThread extends Thread {
-    private final int partNum; // 分片编号（从 1 开始）
-    private final int partSize; // 每片大小
-    private final String sourcePath; // 输入文件路径
-    private final String destPath; // 输出文件路径前缀
-    private final byte[] key; // 加密密钥
-    private final List<Integer> indexList; // 已完成的分片索引
-    private final Client.Logger logger; // 日志记录器
+    private final int partNum;
+    private final int partSize;
+    private final String sourcePath;
+    private final String destPath;
+    private final byte[][] dataKeys;
+    private final byte[][] encryptedDataKeys;
+    private final byte[][] keyIvs;
+    private final List<Integer> indexList;
+    private final Client.Logger logger;
 
-    // 构造函数
-    public EncThread(List<Integer> indexList, int partNum, int partSize, String sourcePath, String destPath, byte[] key) {
+    public EncThread(List<Integer> indexList, int partNum, int partSize, String sourcePath, String destPath,
+                     byte[][] dataKeys, byte[][] encryptedDataKeys, byte[][] keyIvs) {
         this.indexList = indexList;
         this.partNum = partNum;
         this.partSize = partSize;
         this.sourcePath = sourcePath;
         this.destPath = destPath;
-        this.key = Arrays.copyOf(key, key.length); // 防御性拷贝
+        this.dataKeys = dataKeys;
+        this.encryptedDataKeys = encryptedDataKeys;
+        this.keyIvs = keyIvs;
         this.logger = new Client.Logger() {
             @Override
             public void log(String message) {
@@ -43,7 +47,8 @@ public class EncThread extends Thread {
     @Override
     public void run() {
         try {
-            encryptFilePart(partNum, partSize, sourcePath, destPath, key);
+            encryptFilePart(partNum, partSize, sourcePath, destPath, dataKeys[partNum - 1],
+                    encryptedDataKeys[partNum - 1], keyIvs[partNum - 1]);
             indexList.add(partNum);
             logger.log("Encryption completed for part " + partNum + " at " + destPath + "EncPart" + partNum);
         } catch (Exception e) {
@@ -52,11 +57,12 @@ public class EncThread extends Thread {
         }
     }
 
-    private void encryptFilePart(int partNum, int partSize, String sourcePath, String destPath, byte[] key)
+    private void encryptFilePart(int partNum, int partSize, String sourcePath, String destPath, byte[] dataKey,
+                                 byte[] encryptedDataKey, byte[] keyIv)
             throws IOException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException,
             InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException {
         Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
-        SecretKey keyEncryptionKey = new SecretKeySpec(key, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
+        SecretKey keyEncryptionKey = new SecretKeySpec(dataKey, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
         SecureRandom secureRandom = new SecureRandom();
         byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
         secureRandom.nextBytes(iv);
@@ -64,12 +70,10 @@ public class EncThread extends Thread {
 
         cipher.init(Cipher.ENCRYPT_MODE, keyEncryptionKey, parameterSpec);
 
-        // 计算分片偏移
         long offset = (long) (partNum - 1) * partSize;
         String outputFilePath = destPath + "EncPart" + partNum;
         logger.log("Encrypting file part to: " + outputFilePath);
 
-        // 确保输出目录存在
         File outputFile = new File(outputFilePath);
         File parentDir = outputFile.getParentFile();
         if (parentDir != null && !parentDir.exists()) {
@@ -82,7 +86,6 @@ public class EncThread extends Thread {
 
         try (InputStream in = new FileInputStream(sourcePath);
              OutputStream out = new FileOutputStream(outputFilePath)) {
-            // 跳到分片起始位置
             long skipped = in.skip(offset);
             if (skipped != offset) {
                 throw new IOException("Failed to skip to offset " + offset + ", skipped " + skipped);
@@ -94,12 +97,16 @@ public class EncThread extends Thread {
                 throw new IOException("No data read for part " + partNum);
             }
 
-            // 处理分片数据
+            // 写入加密的数据密钥和其 IV
+            out.write(keyIv.length);
+            out.write(keyIv);
+            out.write(encryptedDataKey.length);
+            out.write(encryptedDataKey);
+
+            // 写入文件 IV 和加密数据
+            out.write(iv);
             byte[] dataToEncrypt = (bytesRead < partSize) ? Arrays.copyOf(buffer, bytesRead) : buffer;
             byte[] encryptedData = cipher.doFinal(dataToEncrypt);
-
-            // 写入 IV 和加密数据
-            out.write(iv);
             out.write(encryptedData);
         }
     }
