@@ -2,61 +2,547 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>文件加密与认证系统</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>云服务加密与认证系统</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Google Fonts: Open Sans -->
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+    <!-- Custom CSS -->
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; max-width: 800px; }
-        .container { margin-bottom: 20px; }
-        button { padding: 8px 15px; margin: 5px; cursor: pointer; }
-        input[type="text"], input[type="password"] { padding: 5px; margin: 5px; width: 200px; }
-        #result, #decryptedContent, #backendLogs { margin-top: 15px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
-        .error { color: red; }
-        .success { color: green; }
-        #userList, #decryptedContent, #backendLogs { margin-top: 10px; }
-        #decryptedContent, #backendLogs { white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
-        #backendWindow { display: none; position: fixed; top: 50px; right: 20px; width: 400px; height: 500px; background: white; border: 1px solid #ccc; padding: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
-        #backendWindow h3 { margin: 0 0 10px 0; }
-        #closeBackendBtn { float: right; }
-        #imagePreview { margin-top: 15px; max-width: 100%; display: none; } /* 新增样式 */
+        body {
+            font-family: 'Open Sans', sans-serif;
+            background: #e8f0fe;
+            color: #333;
+            margin: 0;
+            min-height: 100vh;
+        }
+        .content-wrapper {
+            background: #ffffff;
+            border: 1px solid #d1e0ff;
+            border-radius: 8px;
+            padding: 30px;
+            min-height: 100vh;
+            margin-right: 250px;
+        }
+        .sidebar {
+            min-height: 100vh;
+            background: linear-gradient(180deg, #2b4a6b, #1e3a5f);
+            padding-top: 20px;
+            position: fixed;
+            width: 250px;
+            border-right: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .log-sidebar {
+            min-height: 100vh;
+            background: linear-gradient(180deg, #2b4a6b, #1e3a5f);
+            padding: 20px;
+            position: fixed;
+            right: 0;
+            width: 250px;
+            color: #f8f9fa;
+            border-left: 1px solid rgba(255, 255, 255, 0.2);
+            overflow-y: auto;
+        }
+        .log-sidebar h5 {
+            color: #4a90e2;
+        }
+        .log-content {
+            max-height: 80vh;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            color: #f8f9fa;
+        }
+        .sidebar .nav-link {
+            color: #f8f9fa;
+            padding: 12px 20px;
+            position: relative;
+            transition: color 0.3s;
+            cursor: pointer;
+        }
+        .sidebar .nav-link:hover {
+            color: #4a90e2;
+        }
+        .sidebar .nav-link::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 20px;
+            width: 0;
+            height: 1px;
+            background: #4a90e2;
+            transition: width 0.3s;
+        }
+        .sidebar .nav-link:hover::after {
+            width: calc(100% - 40px);
+        }
+        .sidebar .nav-link i {
+            margin-right: 10px;
+        }
+        .content {
+            margin-left: 250px;
+            margin-right: 250px;
+            padding: 20px;
+        }
+        .hero-section {
+            background: #ffffff;
+            color: #333;
+            padding: 40px 20px;
+            border: 1px solid #d1e0ff;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .feature-card {
+            height: 200px;
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            border: 1px solid #d1e0ff;
+            border-radius: 8px;
+            background: #ffffff;
+            transition: transform 0.3s;
+            animation: fadeIn 0.5s ease-out;
+        }
+        .feature-card:hover {
+            transform: translateY(-5px);
+        }
+        .feature-card .card-body {
+            padding: 20px;
+            text-align: center;
+        }
+        .feature-card .card-title a {
+            color: #2b4a6b;
+            text-decoration: none;
+            transition: text-decoration 0.3s;
+        }
+        .feature-card .card-title a:hover {
+            text-decoration: underline;
+        }
+        .section-divider {
+            width: 60px;
+            height: 3px;
+            background: #2b4a6b;
+            margin: 20px auto;
+        }
+        .watermark {
+            position: fixed;
+            bottom: 20px;
+            right: 270px;
+            color: rgba(0, 0, 0, 0.2);
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            pointer-events: none;
+            z-index: 1000;
+        }
+        .api-form {
+            background: #f8f9fa;
+            padding: 20px;
+            border: 1px solid #d1e0ff;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            animation: fadeIn 0.5s ease-out;
+        }
+        .api-response {
+            max-height: 400px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            padding: 15px;
+            border: 1px solid #d1e0ff;
+            border-radius: 8px;
+        }
+        .file-preview img {
+            max-width: 100%;
+            max-height: 300px;
+            object-fit: contain;
+            border: 1px solid #d1e0ff;
+            border-radius: 8px;
+        }
+        .btn-primary, .btn-secondary {
+            border-color: #4a90e2;
+            color: #4a90e2;
+            background: transparent;
+            border-width: 2px;
+        }
+        .btn-primary:hover, .btn-secondary:hover {
+            background: #d1e0ff;
+            color: #2b4a6b;
+            border-color: #2b4a6b;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @media (max-width: 992px) {
+            .log-sidebar {
+                position: relative;
+                width: 100%;
+                border-left: none;
+                border-top: 1px solid rgba(255, 255, 255, 0.2);
+            }
+            .content, .content-wrapper {
+                margin-right: 0;
+            }
+            .watermark {
+                right: 20px;
+            }
+        }
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 100%;
+                position: relative;
+                border-right: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            }
+            .content {
+                margin-left: 0;
+            }
+            .watermark {
+                font-size: 12px;
+                bottom: 10px;
+                right: 10px;
+            }
+            .feature-card {
+                height: auto;
+                min-height: 150px;
+            }
+        }
     </style>
 </head>
 <body>
-<h2>文件加密与认证系统</h2>
+<!-- Watermark -->
+<div class="watermark">SecureCloud@2025</div>
 
-<div class="container">
-    <h3>用户认证</h3>
-    <input type="text" id="userId" placeholder="用户ID">
-    <input type="password" id="passphrase" placeholder="密码">
-    <button id="authBtn">认证</button>
-    <button id="showBackendBtn">显示后台</button>
+<!-- Left Sidebar -->
+<nav class="sidebar">
+    <h3 class="text-white text-center mb-4">云加密系统</h3>
+    <ul class="nav flex-column">
+        <li class="nav-item">
+            <a class="nav-link" href="#home"><i class="bi bi-house-fill"></i> 首页</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" href="#authenticate" onclick="showApiForm('authenticate')"><i class="bi bi-person-check-fill"></i> 认证用户</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" href="#upload" onclick="showApiForm('upload')"><i class="bi bi-upload"></i> 上传文件</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" href="#view" onclick="showApiForm('view')"><i class="bi bi-lock-fill"></i> 查看加密文件</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" href="#viewDecrypted" onclick="showApiForm('viewDecrypted')"><i class="bi bi-unlock-fill"></i> 查看解密文件</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" href="#logs" onclick="scrollToTop()"><i class="bi bi-journal-text"></i> 查看日志</a>
+        </li>
+    </ul>
+</nav>
+
+<!-- Log Sidebar -->
+<div class="log-sidebar">
+    <h5><i class="bi bi-journal-text"></i> 后台日志</h5>
+    <button id="clearLogsBtn" class="btn btn-sm btn-outline-danger mb-3">清除日志</button>
+    <div id="backendLogs" class="log-content">
+        <p>[2025-04-16 10:00:00] 系统启动</p>
+        <p>[2025-04-16 10:00:01] 等待用户操作</p>
+    </div>
 </div>
 
-<div class="container">
-    <h3>已注册用户</h3>
-    <button id="checkUsersBtn">查询已注册用户</button>
-    <div id="userList"></div>
+<!-- Main Content -->
+<div class="content">
+    <div class="content-wrapper">
+        <!-- Hero Section -->
+        <div class="hero-section">
+            <h1>云服务加密与认证系统</h1>
+            <p>使用先进的加密协议和用户认证机制，安全管理文件存储与访问</p>
+        </div>
+
+        <!-- System Features Section -->
+        <div class="container my-5">
+            <h2 class="text-center mb-4">系统亮点</h2>
+            <div class="section-divider"></div>
+            <div class="row">
+                <div class="col-md-4 mb-4">
+                    <div class="card feature-card">
+                        <div class="card-body">
+                            <h5 class="card-title"><a href="authentication.html"><i class="bi bi-person-check-fill me-2"></i>用户认证</a></h5>
+                            <p class="card-text">通过密码硬化和椭圆曲线加密，确保安全的用户身份验证。</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="card feature-card">
+                        <div class="card-body">
+                            <h5 class="card-title"><a href="encryption.html"><i class="bi bi-lock-fill me-2"></i>文件加密</a></h5>
+                            <p class="card-text">使用AES-CTR和GCM加密，保护上传文件的机密性。</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="card feature-card">
+                        <div class="card-body">
+                            <h5 class="card-title"><a href="storage.html"><i class="bi bi-database-fill me-2"></i>安全存储</a></h5>
+                            <p class="card-text">在本地S3模拟环境中存储加密文件，确保数据安全。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Interaction Section -->
+        <div class="container my-5">
+            <h2 class="text-center mb-4">API测试与交互</h2>
+            <div class="section-divider"></div>
+
+            <!-- API Forms -->
+            <div id="api-forms">
+                <!-- Authenticate Form -->
+                <div id="authenticate-form" class="api-form" style="display: none;">
+                    <h5>认证用户</h5>
+                    <form id="authenticate-form-element" onsubmit="event.preventDefault(); callApi('authenticate');">
+                        <div class="mb-3">
+                            <label for="auth-userId" class="form-label">用户ID</label>
+                            <input type="text" class="form-control" id="auth-userId" name="userId" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="auth-passphrase" class="form-label">密码</label>
+                            <input type="password" class="form-control" id="auth-passphrase" name="passphrase" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">提交</button>
+                    </form>
+                </div>
+                <!-- Upload Form -->
+                <div id="upload-form" class="api-form" style="display: none;">
+                    <h5>上传文件</h5>
+                    <form id="upload-form-element" onsubmit="event.preventDefault(); callApi('upload');">
+                        <div class="mb-3">
+                            <label for="upload-passphrase" class="form-label">密码</label>
+                            <input type="password" class="form-control" id="upload-passphrase" name="passphrase" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="upload-file" class="form-label">选择文件</label>
+                            <input type="file" class="form-control" id="upload-file" name="file" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">上传</button>
+                    </form>
+                </div>
+                <!-- View Encrypted Form -->
+                <div id="view-form" class="api-form" style="display: none;">
+                    <h5>查看加密文件</h5>
+                    <form id="view-form-element" onsubmit="event.preventDefault(); callApi('view');">
+                        <div class="mb-3">
+                            <label for="view-passphrase" class="form-label">密码</label>
+                            <input type="password" class="form-control" id="view-passphrase" name="passphrase" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">查看</button>
+                    </form>
+                </div>
+                <!-- View Decrypted Form -->
+                <div id="viewDecrypted-form" class="api-form" style="display: none;">
+                    <h5>查看解密文件</h5>
+                    <form id="viewDecrypted-form-element" onsubmit="event.preventDefault(); callApi('viewDecrypted');">
+                        <div class="mb-3">
+                            <label for="viewDecrypted-passphrase" class="form-label">密码</label>
+                            <input type="password" class="form-control" id="viewDecrypted-passphrase" name="passphrase" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">查看</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- API Response -->
+            <div id="api-response" class="api-response card p-4">
+                <p>点击侧边栏链接以交互并查看API响应结果。</p>
+            </div>
+        </div>
+    </div>
 </div>
 
-<div class="container">
-    <h3>上传并加密文件</h3>
-    <input type="file" id="fileInput" accept="image/*,.txt"> <!-- 支持图片和文本 -->
-    <button id="uploadBtn">上传</button>
-</div>
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // State management
+    let state = {
+        isAuthenticated: false,
+        currentUserId: null
+    };
 
-<div class="container">
-    <h3>查看加密文件</h3>
-    <button id="viewBtn">查看加密内容</button>
-    <button id="viewDecryptedBtn">查看解密内容</button>
-</div>
+    // WebSocket for logs
+    let ws = null;
+    function connectWebSocket() {
+        ws = new WebSocket('ws://localhost:8080/logs');
+        ws.onmessage = (event) => {
+            appendLog(event.data);
+        };
+        ws.onerror = () => {
+            appendLog('WebSocket 连接错误');
+        };
+        ws.onclose = () => {
+            appendLog('WebSocket 关闭，重连中...');
+            setTimeout(connectWebSocket, 5000);
+        };
+    }
+    connectWebSocket();
 
-<div id="result"></div>
-<div id="decryptedContent"></div>
-<img id="imagePreview" alt="解密后的图片预览"> <!-- 新增图片预览元素 -->
+    // Show specific API form and hide others
+    function showApiForm(apiName) {
+        const forms = ['authenticate', 'upload', 'view', 'viewDecrypted'];
+        forms.forEach(form => {
+            document.getElementById(`${form}-form`).style.display = form === apiName ? 'block' : 'none';
+        });
+    }
 
-<div id="backendWindow">
-    <h3>后台日志 <button id="closeBackendBtn">关闭</button></h3>
-    <div id="backendLogs"></div>
-</div>
+    // Scroll to top (for logs link)
+    function scrollToTop() {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
 
-<script src="/static/app.js"></script>
+    // Append log to backendLogs
+    function appendLog(message) {
+        const logDiv = document.getElementById('backendLogs');
+        const logEntry = document.createElement('p');
+        logEntry.textContent = `[${new Date().toISOString().replace('T', ' ').slice(0, 19)}] ${message}`;
+        logDiv.appendChild(logEntry);
+        logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    // Clear logs
+    document.getElementById('clearLogsBtn').addEventListener('click', () => {
+        const logDiv = document.getElementById('backendLogs');
+        logDiv.innerHTML = '';
+        appendLog('日志已清除');
+    });
+
+    // Call backend APIs
+    async function callApi(apiName) {
+        const responseDiv = document.getElementById('api-response');
+        responseDiv.innerHTML = '<p>Loading...</p>';
+        const baseUrl = '/api';
+        const apiEndpoints = {
+            authenticate: `${baseUrl}/authenticate`,
+            upload: `${baseUrl}/upload`,
+            view: `${baseUrl}/view`,
+            viewDecrypted: `${baseUrl}/viewDecrypted`
+        };
+
+        try {
+            let response, data;
+            const form = document.getElementById(`${apiName}-form-element`);
+            const formData = new FormData(form);
+            const passphrase = formData.get('passphrase');
+            if (!passphrase) {
+                responseDiv.innerHTML = '<p class="text-danger">错误: 密码不能为空</p>';
+                appendLog(`${apiName} 失败: 密码为空`);
+                return;
+            }
+
+            if (apiName === 'authenticate') {
+                const userId = formData.get('userId');
+                if (!userId) {
+                    responseDiv.innerHTML = '<p class="text-danger">错误: 用户ID不能为空</p>';
+                    appendLog(`${apiName} 失败: 用户ID为空`);
+                    return;
+                }
+                const options = {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `userId=${encodeURIComponent(userId)}&passphrase=${encodeURIComponent(passphrase)}`
+                };
+                response = await fetch(apiEndpoints[apiName], options);
+                if (!response.ok) throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
+                data = await response.json();
+                state.isAuthenticated = true;
+                state.currentUserId = userId;
+                responseDiv.innerHTML = `<h6>${apiName} 结果:</h6><pre>${JSON.stringify(data, null, 2)}</pre>`;
+                appendLog(`${apiName} 成功: ${data.message || '操作完成'}`);
+            } else if (state.isAuthenticated) {
+                if (apiName === 'upload') {
+                    const file = formData.get('file');
+                    if (!file) {
+                        responseDiv.innerHTML = '<p class="text-danger">错误: 请选择文件</p>';
+                        appendLog(`${apiName} 失败: 未选择文件`);
+                        return;
+                    }
+                    const uploadFormData = new FormData();
+                    uploadFormData.append('file', file);
+                    const options = {
+                        method: 'POST',
+                        body: uploadFormData,
+                        headers: { 'X-File-Name': encodeURIComponent(file.name) }
+                    };
+                    response = await fetch(`${apiEndpoints[apiName]}?userId=${encodeURIComponent(state.currentUserId)}&passphrase=${encodeURIComponent(passphrase)}`, options);
+                } else {
+                    const options = {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: `userId=${encodeURIComponent(state.currentUserId)}&passphrase=${encodeURIComponent(passphrase)}`
+                    };
+                    response = await fetch(apiEndpoints[apiName], options);
+                }
+                if (!response.ok) throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
+                const contentType = response.headers.get('content-type');
+                const fileName = response.headers.get('X-File-Name') || (apiName === 'view' ? 'encrypted_file.bin' : 'decrypted_file');
+                if (contentType.includes('application/json')) {
+                    data = await response.json();
+                    responseDiv.innerHTML = `<h6>${apiName} 结果:</h6><pre>${JSON.stringify(data, null, 2)}</pre>`;
+                    appendLog(`${apiName} 成功: ${data.message || '操作完成'}`);
+                } else {
+                    const blob = await response.blob();
+                    if (contentType.includes('image')) {
+                        const url = URL.createObjectURL(blob);
+                        responseDiv.innerHTML = `
+                            <h6>文件预览 (${fileName}):</h6>
+                            <div class="file-preview">
+                                <img src="${url}" alt="${fileName}">
+                            </div>
+                            <a href="${url}" download="${fileName}" class="btn btn-secondary mt-2">下载文件</a>
+                        `;
+                        appendLog(`${apiName} 成功: 预览文件 ${fileName}`);
+                    } else if (contentType.includes('text')) {
+                        const text = await blob.text();
+                        responseDiv.innerHTML = `<h6>文件内容 (${fileName}):</h6><pre>${text}</pre>`;
+                        appendLog(`${apiName} 成功: 查看文件 ${fileName}`);
+                    } else {
+                        const url = URL.createObjectURL(blob);
+                        responseDiv.innerHTML = `
+                            <h6>文件下载 (${fileName}):</h6>
+                            <a href="${url}" download="${fileName}" class="btn btn-primary">下载文件</a>
+                        `;
+                        appendLog(`${apiName} 成功: 下载文件 ${fileName}`);
+                    }
+                }
+            } else {
+                responseDiv.innerHTML = '<p class="text-danger">请先认证</p>';
+                appendLog(`${apiName} 失败: 未认证`);
+            }
+        } catch (error) {
+            responseDiv.innerHTML = `<p class="text-danger">错误: ${error.message}</p>`;
+            appendLog(`${apiName} 失败: ${error.message}`);
+        }
+    }
+
+    // Prevent watermark tampering
+    function checkWatermark() {
+        const watermark = document.querySelector('.watermark');
+        if (!watermark || watermark.style.display === 'none' || watermark.style.opacity === '0') {
+            const newWatermark = document.createElement('div');
+            newWatermark.className = 'watermark';
+            newWatermark.innerText = 'SecureCloud@2025';
+            document.body.appendChild(newWatermark);
+        }
+    }
+    setInterval(checkWatermark, 1000);
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+        appendLog('页面初始化完成');
+    });
+</script>
 </body>
 </html>

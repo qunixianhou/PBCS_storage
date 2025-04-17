@@ -65,6 +65,7 @@ public class WebServer {
     }
 
     private static void serveStaticFiles() {
+
         get("/", (req, res) -> {
             res.type("text/html");
             InputStream inputStream = WebServer.class.getResourceAsStream("/static/index.html");
@@ -74,7 +75,17 @@ public class WebServer {
             }
             return new String(inputStream.readAllBytes());
         });
-
+        get("/static/*", (req, res) -> {
+            String path = "/static/" + req.splat()[0];
+            InputStream inputStream = WebServer.class.getResourceAsStream(path);
+            if (inputStream == null) {
+                res.status(404);
+                return "Resource not found";
+            }
+            if (path.endsWith(".js")) res.type("application/javascript");
+            else if (path.endsWith(".css")) res.type("text/css");
+            return new String(inputStream.readAllBytes());
+        });
         get("/static/app.js", (req, res) -> {
             res.type("application/javascript");
             InputStream inputStream = WebServer.class.getResourceAsStream("/static/app.js");
