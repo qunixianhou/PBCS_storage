@@ -4,11 +4,7 @@ import javax.crypto.*;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.*;
-import java.security.InvalidAlgorithmParameterException;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.util.Arrays;
 import java.util.List;
 
 public class EncThread extends Thread {
@@ -46,68 +42,66 @@ public class EncThread extends Thread {
 
     @Override
     public void run() {
-        try {
-            encryptFilePart(partNum, partSize, sourcePath, destPath, dataKeys[partNum - 1],
-                    encryptedDataKeys[partNum - 1], keyIvs[partNum - 1]);
-            indexList.add(partNum);
-            logger.log("Encryption completed for part " + partNum + " at " + destPath + "EncPart" + partNum);
-        } catch (Exception e) {
-            logger.log("EncThread Error", "Failed to encrypt file part " + partNum + ": " + e.getMessage());
-            throw new RuntimeException("Encryption failed for part " + partNum, e);
-        }
-    }
+        for (int i = 0; i < partNum; i++) {
+            String partPath = destPath + "EncPart" + (i + 1);
+            try (FileInputStream in = new FileInputStream(sourcePath);
+                 FileOutputStream out = new FileOutputStream(partPath)) {
+                // Skip to the correct offset
+                long offset = (long) i * partSize;
+                long skipped = in.skip(offset);
+                if (skipped != offset) {
+                    throw new IOException("Failed to skip to offset " + offset + ", skipped " + skipped);
+                }
 
-    private void encryptFilePart(int partNum, int partSize, String sourcePath, String destPath, byte[] dataKey,
-                                 byte[] encryptedDataKey, byte[] keyIv)
-            throws IOException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException,
-            InvalidAlgorithmParameterException, IllegalBlockSizeException, BadPaddingException {
-        Cipher cipher = Cipher.getInstance(Constants.KEY_ENCRYPTION_CTR_ALGORITHM);
-        SecretKey keyEncryptionKey = new SecretKeySpec(dataKey, Constants.KEY_ENCRYPTION_BASE_ALGORITHM);
-        SecureRandom secureRandom = new SecureRandom();
-        byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
-        secureRandom.nextBytes(iv);
-        IvParameterSpec parameterSpec = new IvParameterSpec(iv);
+                // Get encryption parameters
+                byte[] dataKey = dataKeys[i];
+                byte[] encryptedDataKey = encryptedDataKeys[i];
+                byte[] keyIv = keyIvs[i];
+                byte[] iv = new byte[Constants.KEY_ENCRYPTION_CTR_IV_LENGTH];
+                SecureRandom.getInstanceStrong().nextBytes(iv);
 
-        cipher.init(Cipher.ENCRYPT_MODE, keyEncryptionKey, parameterSpec);
+                // Log encryption parameters
+                logger.log("Part " + (i + 1) + " - Generated dataKey: " + Utils.bytesToHex(dataKey));
+                logger.log("Part " + (i + 1) + " - Key IV (GCM): " + Utils.bytesToHex(keyIv));
+                logger.log("Part " + (i + 1) + " - Encrypted dataKey: " + Utils.bytesToHex(encryptedDataKey));
+                logger.log("Part " + (i + 1) + " - CTR IV: " + Utils.bytesToHex(iv));
 
-        long offset = (long) (partNum - 1) * partSize;
-        String outputFilePath = destPath + "EncPart" + partNum;
-        logger.log("Encrypting file part to: " + outputFilePath);
+                // Write header: [keyIv.length (4)][keyIv][encryptedDataKey.length (4)][encryptedDataKey][iv]
+                out.write(keyIv.length >> 24);
+                out.write(keyIv.length >> 16);
+                out.write(keyIv.length >> 8);
+                out.write(keyIv.length);
+                out.write(keyIv);
+                out.write(encryptedDataKey.length >> 24);
+                out.write(encryptedDataKey.length >> 16);
+                out.write(encryptedDataKey.length >> 8);
+                out.write(encryptedDataKey.length);
+                out.write(encryptedDataKey);
+                out.write(iv);
 
-        File outputFile = new File(outputFilePath);
-        File parentDir = outputFile.getParentFile();
-        if (parentDir != null && !parentDir.exists()) {
-            logger.log("Creating directory: " + parentDir.getAbsolutePath());
-            boolean created = parentDir.mkdirs();
-            if (!created) {
-                throw new IOException("Failed to create directory: " + parentDir.getAbsolutePath());
+                // Encrypt content
+                Cipher cipher = Cipher.getInstance("AES/CTR/NoPadding");
+                cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(dataKey, "AES"), new IvParameterSpec(iv));
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                int totalRead = 0;
+                while (totalRead < partSize && (bytesRead = in.read(buffer)) != -1) {
+                    int toRead = Math.min(bytesRead, partSize - totalRead);
+                    byte[] encrypted = cipher.update(buffer, 0, toRead);
+                    if (encrypted != null) {
+                        out.write(encrypted);
+                    }
+                    totalRead += toRead;
+                }
+                byte[] finalBlock = cipher.doFinal();
+                if (finalBlock != null) {
+                    out.write(finalBlock);
+                }
+                logger.log("Encrypted file part to: " + partPath);
+                indexList.add(i + 1);
+            } catch (Exception e) {
+                logger.log("Encryption failed for part " + (i + 1) + ": " + e.getMessage());
             }
-        }
-
-        try (InputStream in = new FileInputStream(sourcePath);
-             OutputStream out = new FileOutputStream(outputFilePath)) {
-            long skipped = in.skip(offset);
-            if (skipped != offset) {
-                throw new IOException("Failed to skip to offset " + offset + ", skipped " + skipped);
-            }
-
-            byte[] buffer = new byte[partSize];
-            int bytesRead = in.read(buffer);
-            if (bytesRead <= 0) {
-                throw new IOException("No data read for part " + partNum);
-            }
-
-            // 写入加密的数据密钥和其 IV
-            out.write(keyIv.length);
-            out.write(keyIv);
-            out.write(encryptedDataKey.length);
-            out.write(encryptedDataKey);
-
-            // 写入文件 IV 和加密数据
-            out.write(iv);
-            byte[] dataToEncrypt = (bytesRead < partSize) ? Arrays.copyOf(buffer, bytesRead) : buffer;
-            byte[] encryptedData = cipher.doFinal(dataToEncrypt);
-            out.write(encryptedData);
         }
     }
 }

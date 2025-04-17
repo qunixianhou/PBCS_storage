@@ -157,6 +157,25 @@ public class LocalS3Client {
         }
     }
 
+    public void getObject(String bucketName, String key, String filePath) {
+        try {
+            Path sourcePath = Paths.get(baseDirectory, bucketName, key).normalize();
+            File sourceFile = sourcePath.toFile();
+            if (!sourceFile.exists()) {
+                throw new RuntimeException("Object not found: " + sourcePath);
+            }
+
+            Path targetPath = Paths.get(filePath).normalize();
+            Files.createDirectories(targetPath.getParent());
+            Files.copy(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+
+            System.out.println("LocalS3: Get object from " + sourcePath + " and saved to " + targetPath +
+                    " (size: " + Files.size(targetPath) + " bytes)");
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to get object and save to " + filePath, e);
+        }
+    }
+
     public void setBucketAccelerateConfiguration(SetBucketAccelerateConfigurationRequest request) {
         accelerateConfig.put(request.getBucketName(),
                 "Enabled".equals(request.getConfiguration().getStatus()));

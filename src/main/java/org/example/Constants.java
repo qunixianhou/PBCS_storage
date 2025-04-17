@@ -14,7 +14,6 @@ public class Constants {
 
     public static final byte RESP_TYPE_OK = 0x06;
     public static final byte RESP_TYPE_ERROR = 0x07;
-
     public static final int MAC_LENGTH = 32;
     public static final int MAC_KEY_LENGTH = 128;
     public static final int R_LENGTH = 128 / 8; // bytes
