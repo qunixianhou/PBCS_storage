@@ -1,194 +1,248 @@
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('页面已加载');
-
-    const resultDiv = document.getElementById('result');
-    const decryptedContentDiv = document.getElementById('decryptedContent');
-    const backendLogsDiv = document.getElementById('backendLogs');
-    const backendWindow = document.getElementById('backendWindow');
-    const authBtn = document.getElementById('authBtn');
-    const uploadBtn = document.getElementById('uploadBtn');
-    const viewBtn = document.getElementById('viewBtn');
-    const viewDecryptedBtn = document.getElementById('viewDecryptedBtn');
-    const checkUsersBtn = document.getElementById('checkUsersBtn');
-    const userListDiv = document.getElementById('userList');
-    const showBackendBtn = document.getElementById('showBackendBtn');
-    const closeBackendBtn = document.getElementById('closeBackendBtn');
-
-    let isAuthenticated = false;
-    let currentUserId = null;
-
-    // WebSocket 连接
-    let ws = new WebSocket('ws://localhost:8080/logs');
-    ws.onmessage = (event) => {
-        backendLogsDiv.textContent += event.data + '\n';
-        backendLogsDiv.scrollTop = backendLogsDiv.scrollHeight; // 自动滚动到底部
+    // DOM 元素
+    const elements = {
+        userId: document.getElementById('userId'),
+        passphrase: document.getElementById('passphrase'),
+        authBtn: document.getElementById('authBtn'),
+        checkUsersBtn: document.getElementById('checkUsersBtn'),
+        userList: document.getElementById('userList'),
+        fileInput: document.getElementById('fileInput'),
+        uploadBtn: document.getElementById('uploadBtn'),
+        uploadProgress: document.getElementById('uploadProgress'),
+        viewEncryptedBtn: document.getElementById('viewEncryptedBtn'),
+        viewDecryptedBtn: document.getElementById('viewDecryptedBtn'),
+        contentDisplay: document.getElementById('contentDisplay'),
+        imagePreview: document.getElementById('imagePreview'),
+        result: document.getElementById('result'),
+        showLogsBtn: document.getElementById('showLogsBtn'),
+        clearLogsBtn: document.getElementById('clearLogsBtn'),
+        backendLogs: document.getElementById('backendLogs')
     };
-    ws.onerror = (error) => console.error('WebSocket 错误:', error);
-    ws.onclose = () => console.log('WebSocket 连接关闭');
 
-    function showResult(message, isError = false) {
-        resultDiv.textContent = message;
-        resultDiv.className = isError ? 'error' : 'success';
-    }
+    // 状态管理
+    let state = {
+        isAuthenticated: false,
+        currentUserId: null,
+        ws: null
+    };
 
-    // 显示/隐藏后台窗口
-    showBackendBtn.addEventListener('click', () => {
-        backendWindow.style.display = 'block';
-    });
-    closeBackendBtn.addEventListener('click', () => {
-        backendWindow.style.display = 'none';
-    });
-
-    authBtn.addEventListener('click', async () => {
-        const userId = document.getElementById('userId').value;
-        const passphrase = document.getElementById('passphrase').value;
-
-        if (!userId || !passphrase) {
-            showResult('请输入用户ID和密码', true);
-            return;
+    // UI 工具函数
+    const ui = {
+        showResult(message, isError = false) {
+            elements.result.textContent = message;
+            elements.result.className = `alert ${isError ? 'alert-danger' : 'alert-success'}`;
+            elements.result.style.display = 'block';
+            setTimeout(() => { elements.result.style.display = 'none'; }, 5000);
+        },
+        clearContent() {
+            elements.contentDisplay.textContent = '';
+            elements.imagePreview.style.display = 'none';
         }
+    };
 
-        showResult('正在处理...');
-        try {
-            const response = await fetch('/api/authenticate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `userId=${encodeURIComponent(userId)}&passphrase=${encodeURIComponent(passphrase)}`
-            });
-            const data = await response.json();
-            if (response.ok) {
-                isAuthenticated = true;
-                currentUserId = userId;
-                showResult(data.message);
-            } else {
-                showResult(data.message, true);
+    // WebSocket 模块
+    const websocket = {
+        connect() {
+            state.ws = new WebSocket('ws://localhost:8080/logs');
+            state.ws.onmessage = (event) => {
+                const logEntry = `[${new Date().toLocaleTimeString()}] ${event.data}\n`;
+                elements.backendLogs.textContent += logEntry;
+                elements.backendLogs.scrollTop = elements.backendLogs.scrollHeight;
+            };
+            state.ws.onerror = (error) => {
+                console.error('WebSocket 错误:', error);
+                ui.showResult('日志连接错误', true);
+            };
+            state.ws.onclose = () => {
+                console.log('WebSocket 关闭，重连中...');
+                setTimeout(websocket.connect, 5000);
+            };
+        }
+    };
+    websocket.connect();
+
+    // 认证模块
+    const auth = {
+        async authenticate() {
+            const userId = elements.userId.value.trim();
+            const passphrase = elements.passphrase.value.trim();
+            if (!userId || !passphrase) {
+                ui.showResult('用户ID和密码不能为空', true);
+                return;
             }
-        } catch (error) {
-            showResult('认证错误: ' + error.message, true);
-        }
-
-        if (response.ok) {
-            isAuthenticated = true;
-            currentUserId = userId;
-            showResult(data.message);
-            // 检查 WebSocket 状态并重新连接
-            if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-                console.log('Reconnecting WebSocket...');
-                ws = new WebSocket('ws://localhost:8080/logs');
-                ws.onmessage = (event) => {
-                    backendLogsDiv.textContent += event.data + '\n';
-                    backendLogsDiv.scrollTop = backendLogsDiv.scrollHeight;
-                };
-                ws.onerror = (error) => console.error('WebSocket 错误:', error);
-                ws.onclose = () => console.log('WebSocket 连接关闭');
-            }
-        }
-    });
-
-    checkUsersBtn.addEventListener('click', async () => {
-        showResult('正在查询...');
-        try {
-            const response = await fetch('/api/registeredUsers', {
-                method: 'GET',
-                headers: { 'Accept': 'application/json' }
-            });
-            const users = await response.json();
-            if (response.ok) {
-                userListDiv.innerHTML = users.length > 0
-                    ? users.map(user => `<p>${user}</p>`).join('')
-                    : '<p>暂无注册用户</p>';
-                showResult(users.length > 0 ? '查询成功，发现 ' + users.length + ' 个用户' : '查询成功，无注册用户');
-            } else {
-                showResult(users.message, true);
-            }
-        } catch (error) {
-            showResult('查询错误: ' + error.message, true);
-        }
-    });
-
-    uploadBtn.addEventListener('click', async () => {
-        if (!isAuthenticated) {
-            showResult('请先认证', true);
-            return;
-        }
-
-        const fileInput = document.getElementById('fileInput');
-        const file = fileInput.files[0];
-
-        if (!file) {
-            showResult('请选择文件', true);
-            return;
-        }
-
-        showResult('正在上传和加密...');
-        const formData = new FormData();
-        formData.append('file', file);
-
-        try {
-            const response = await fetch(`/api/upload?userId=${encodeURIComponent(currentUserId)}&passphrase=${encodeURIComponent(document.getElementById('passphrase').value)}`, {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-File-Name': file.name }
-            });
-            const data = await response.json();
-            showResult(data.message, !response.ok);
-        } catch (error) {
-            showResult('上传错误: ' + error.message, true);
-        }
-    });
-
-    viewBtn.addEventListener('click', async () => {
-        if (!isAuthenticated) {
-            showResult('请先认证', true);
-            return;
-        }
-        const passphrase = document.getElementById('passphrase').value;
-        console.log('Viewing encrypted file with passphrase:', passphrase); // 添加调试日志
-        showResult('正在查看加密内容...');
-        decryptedContentDiv.textContent = ''; // 清空之前的内容
-        try {
-            const response = await fetch('/api/view', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `userId=${encodeURIComponent(currentUserId)}&passphrase=${encodeURIComponent(document.getElementById('passphrase').value)}`
-            });
-            if (response.ok) {
-                const encryptedText = await response.text(); // 获取加密内容
-                decryptedContentDiv.textContent = encryptedText; // 显示加密内容
-                showResult('加密内容查看成功');
-            } else {
+            ui.showResult('认证中...');
+            try {
+                const response = await fetch('/api/authenticate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `userId=${encodeURIComponent(userId)}&passphrase=${encodeURIComponent(passphrase)}`
+                });
                 const data = await response.json();
-                showResult(data.message, true);
+                if (response.ok) {
+                    state.isAuthenticated = true;
+                    state.currentUserId = userId;
+                    ui.showResult(data.message);
+                } else {
+                    ui.showResult(data.message, true);
+                }
+            } catch (error) {
+                ui.showResult('认证失败: ' + error.message, true);
             }
-        } catch (error) {
-            showResult('查看错误: ' + error.message, true);
         }
-    });
+    };
+    elements.authBtn.addEventListener('click', auth.authenticate);
 
-    viewDecryptedBtn.addEventListener('click', async () => {
-        if (!isAuthenticated) {
-            showResult('请先认证', true);
-            return;
-        }
-
-        showResult('正在解密并查看文件内容...');
-        decryptedContentDiv.textContent = '';
-        try {
-            const response = await fetch('/api/viewDecrypted', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `userId=${encodeURIComponent(currentUserId)}&passphrase=${encodeURIComponent(document.getElementById('passphrase').value)}`
-            });
-            if (response.ok) {
-                const decryptedText = await response.text();
-                decryptedContentDiv.textContent = decryptedText;
-                showResult('解密查看成功');
-            } else {
+    // 用户查询模块
+    const users = {
+        async checkUsers() {
+            ui.showResult('查询中...');
+            try {
+                const response = await fetch('/api/registeredUsers', {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
                 const data = await response.json();
-                showResult(data.message, true);
+                if (response.ok) {
+                    elements.userList.innerHTML = data.length > 0
+                        ? data.map(user => `<p class="mb-1">${user}</p>`).join('')
+                        : '<p>暂无注册用户</p>';
+                    ui.showResult(data.length > 0 ? `发现 ${data.length} 个用户` : '无注册用户');
+                } else {
+                    ui.showResult(data.message, true);
+                }
+            } catch (error) {
+                ui.showResult('查询失败: ' + error.message, true);
             }
-        } catch (error) {
-            showResult('解密查看错误: ' + error.message, true);
         }
-    });
+    };
+    elements.checkUsersBtn.addEventListener('click', users.checkUsers);
+
+    // 文件上传模块
+    const upload = {
+        async uploadFile() {
+            if (!state.isAuthenticated) {
+                ui.showResult('请先认证', true);
+                return;
+            }
+            const file = elements.fileInput.files[0];
+            if (!file) {
+                ui.showResult('请选择文件', true);
+                return;
+            }
+            ui.showResult('上传中...');
+            const formData = new FormData();
+            formData.append('file', file);
+            const xhr = new XMLHttpRequest();
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    const percent = (event.loaded / event.total) * 100;
+                    elements.uploadProgress.querySelector('.progress-bar').style.width = `${percent}%`;
+                    elements.uploadProgress.style.display = 'block';
+                }
+            };
+            xhr.open('POST', `/api/upload?userId=${encodeURIComponent(state.currentUserId)}&passphrase=${encodeURIComponent(elements.passphrase.value)}`);
+            xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+            xhr.onload = () => {
+                const data = JSON.parse(xhr.responseText);
+                elements.uploadProgress.style.display = 'none';
+                ui.showResult(data.message, xhr.status !== 200);
+            };
+            xhr.onerror = () => {
+                elements.uploadProgress.style.display = 'none';
+                ui.showResult('上传失败', true);
+            };
+            xhr.send(formData);
+        }
+    };
+    elements.uploadBtn.addEventListener('click', upload.uploadFile);
+
+    // 文件查看模块
+    const view = {
+        async viewEncrypted() {
+            if (!state.isAuthenticated) {
+                ui.showResult('请先认证', true);
+                return;
+            }
+            ui.clearContent();
+            ui.showResult('获取加密文件...');
+            try {
+                const response = await fetch('/api/view', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `userId=${encodeURIComponent(state.currentUserId)}&passphrase=${encodeURIComponent(elements.passphrase.value)}`
+                });
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'encrypted_file.bin';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    ui.showResult('加密文件已下载');
+                } else {
+                    const data = await response.json();
+                    ui.showResult(data.message, true);
+                }
+            } catch (error) {
+                ui.showResult('获取失败: ' + error.message, true);
+            }
+        },
+        async viewDecrypted() {
+            if (!state.isAuthenticated) {
+                ui.showResult('请先认证', true);
+                return;
+            }
+            ui.clearContent();
+            ui.showResult('解密中...');
+            try {
+                const response = await fetch('/api/viewDecrypted', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `userId=${encodeURIComponent(state.currentUserId)}&passphrase=${encodeURIComponent(elements.passphrase.value)}`
+                });
+                if (!response.ok) {
+                    const data = await response.json();
+                    ui.showResult(data.message, true);
+                    return;
+                }
+                const blob = await response.blob();
+                const contentType = response.headers.get('Content-Type');
+                const fileName = response.headers.get('X-File-Name') || 'unknown';
+                if (contentType.startsWith('image/')) {
+                    elements.imagePreview.src = URL.createObjectURL(blob);
+                    elements.imagePreview.style.display = 'block';
+                    ui.showResult('图片解密成功');
+                } else if (contentType === 'text/plain') {
+                    elements.contentDisplay.textContent = await blob.text();
+                    ui.showResult('文本解密成功');
+                } else {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    ui.showResult('文件解密成功，已下载');
+                }
+            } catch (error) {
+                ui.showResult('解密失败: ' + error.message, true);
+            }
+        }
+    };
+    elements.viewEncryptedBtn.addEventListener('click', view.viewEncrypted);
+    elements.viewDecryptedBtn.addEventListener('click', view.viewDecrypted);
+
+    // 日志模块
+    const logs = {
+        show() {
+            const offcanvas = new bootstrap.Offcanvas(document.getElementById('logOffcanvas'));
+            offcanvas.show();
+        },
+        clear() {
+            elements.backendLogs.textContent = '';
+        }
+    };
+    elements.showLogsBtn.addEventListener('click', logs.show);
+    elements.clearLogsBtn.addEventListener('click', logs.clear);
 });

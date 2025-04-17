@@ -5,9 +5,13 @@ import spark.Request;
 import spark.Response;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 
@@ -21,7 +25,7 @@ public class ApiController {
     public static void initRoutes() {
         post("/api/authenticate", ApiController::authenticate);
         post("/api/upload", ApiController::uploadFile);
-        post("/api/view", ApiController::viewEncryptedFile); // 重命名为更明确的目的
+        post("/api/view", ApiController::viewEncryptedFile);
         get("/api/registeredUsers", ApiController::getRegisteredUsers);
         post("/api/viewDecrypted", ApiController::viewDecryptedFile);
     }
@@ -33,26 +37,29 @@ public class ApiController {
 
             if (userId == null || passphrase == null) {
                 res.status(400);
-                return gson.toJson(new ResponseMessage("用户ID和密码不能为空"));
+                return gson.toJson(new ResponseMessage("User ID and passphrase cannot be empty"));
             }
 
+            WebServer.log(userId, "Authentication", "Started", "User authentication initiated");
             res.type("application/json");
             if (isUserRegistered(userId)) {
                 boolean authenticated = authenticateUser(userId, passphrase);
                 if (authenticated) {
-                    return gson.toJson(new ResponseMessage("登录成功"));
+                    WebServer.log(userId, "Authentication", "Completed", "User authenticated successfully");
+                    return gson.toJson(new ResponseMessage("Login successful"));
                 } else {
                     res.status(401);
-                    return gson.toJson(new ResponseMessage("密码错误"));
+                    return gson.toJson(new ResponseMessage("Incorrect passphrase"));
                 }
             } else {
                 Client client = new Client(BUCKET_NAME, LOCAL_S3_PATH, userId);
                 client.register(userId, passphrase, BUCKET_NAME, userId + "/sid");
-                return gson.toJson(new ResponseMessage("注册成功"));
+                WebServer.log(userId, "Authentication", "Completed", "New user registered successfully");
+                return gson.toJson(new ResponseMessage("Registration successful"));
             }
         } catch (Exception e) {
             res.status(400);
-            String message = e.getMessage().contains("already registered") ? "用户已注册" : "操作失败: " + e.getMessage();
+            String message = e.getMessage().contains("already registered") ? "User already registered" : "Operation failed: " + e.getMessage();
             return gson.toJson(new ResponseMessage(message));
         }
     }
@@ -61,105 +68,101 @@ public class ApiController {
         try {
             String userId = req.queryParams("userId");
             String passphrase = req.queryParams("passphrase");
-            String filePath = saveUploadedFile(req);
+            WebServer.log(userId, "File Upload", "Started", "Initiating file upload and encryption");
 
             if (!AuthServer.getInstance().isUserRegistered(userId)) {
                 res.status(400);
-                return gson.toJson(new ResponseMessage("用户未注册，请先认证"));
+                return gson.toJson(new ResponseMessage("User not registered, please authenticate first"));
             }
 
+            String filePath = saveUploadedFile(req);
+            String originalFileName = URLDecoder.decode(req.headers("X-File-Name"), StandardCharsets.UTF_8.name()); // 解码文件名
             Client client = new Client(BUCKET_NAME, LOCAL_S3_PATH, userId);
-            // 修改上传逻辑，仅存储加密文件
             String key0 = userId + "/sid";
             String key1 = userId + "/rid";
             String key4 = userId + "/oneThreadEncryptedFile";
             String internalCipherFilePath = Constants.FILE_PATH + userId + "/internalSingleThreadEncryptedFile";
 
-            // 密码硬化
             String hardenedPWD = client.ibOPRF(userId, passphrase);
-            // 密钥存款
             byte[] msk = client.give(userId, passphrase, BUCKET_NAME, key1, key0);
-            // 加密并上传文件（单线程版本）
             client.secureDeposit(BUCKET_NAME, key4, msk, filePath, internalCipherFilePath);
 
+            // 保存文件名到文件系统中
+            File nameFile = new File(Constants.FILE_PATH + userId + "/originalFileName.txt");
+            Files.write(nameFile.toPath(), originalFileName.getBytes(StandardCharsets.UTF_8));
+
+            WebServer.log(userId, "File Upload", "Completed", "File uploaded and encrypted successfully");
             res.type("application/json");
-            return gson.toJson(new ResponseMessage("文件上传和加密成功"));
+            return gson.toJson(new ResponseMessage("File uploaded and encrypted successfully"));
         } catch (Exception e) {
             res.status(500);
-            return gson.toJson(new ResponseMessage("上传失败: " + e.getMessage()));
+            return gson.toJson(new ResponseMessage("Upload failed: " + e.getMessage()));
         }
     }
-
     private static String viewEncryptedFile(Request req, Response res) {
         try {
             String userId = req.queryParams("userId");
             String passphrase = req.queryParams("passphrase");
-            System.out.println("Attempting to view encrypted file for user: " + userId);
+            WebServer.log(userId, "View Encrypted File", "Started", "Retrieving encrypted file");
 
             if (!AuthServer.getInstance().isUserRegistered(userId)) {
                 res.status(400);
-                return gson.toJson(new ResponseMessage("用户未注册，请先认证"));
+                return gson.toJson(new ResponseMessage("User not registered, please authenticate first"));
             }
 
             Client client = new Client(BUCKET_NAME, LOCAL_S3_PATH, userId);
-            String key0 = userId + "/sid"; // sid 的存储路径
+            String key0 = userId + "/sid";
             String key4 = userId + "/oneThreadEncryptedFile";
             String encryptedFilePath = Constants.FILE_PATH + userId + "/secureRetrieve";
 
-            // 从 LocalS3Client 获取 sid
-            byte[] sid;
-            try {
-                final LocalS3Client s3 = LocalS3Client.Builder.standard().withBaseDirectory(LOCAL_S3_PATH).build();
-                LocalS3Client.S3Object object = s3.getObject(new LocalS3Client.GetObjectRequest(BUCKET_NAME, key0));
-                sid = object.getObjectContent().readAllBytes();
-            } catch (Exception e) {
-                throw new Exception("无法获取 sID: " + e.getMessage());
-            }
-
-            // 使用 sid 和 passphrase 计算 t
+            byte[] sid = getSid(userId);
             byte[] computedT = Utils.KDF(sid, passphrase, Constants.KDF1_SALT, Constants.MAC_KEY_LENGTH, Constants.KDF_HASH_REPETITIONS);
             byte[] registeredT = AuthServer.getInstance().usersReg.get(userId).t;
 
-            // 比较注册时和计算出的 t 值
             if (!Arrays.equals(computedT, registeredT)) {
                 res.status(401);
-                System.out.println("Authentication failed: t values do not match");
-                return gson.toJson(new ResponseMessage("认证失败：密码错误"));
+                return gson.toJson(new ResponseMessage("Authentication failed: Incorrect passphrase"));
             }
 
-            // 认证通过后检索加密文件
             client.secureRetrieve(BUCKET_NAME, key4, encryptedFilePath);
-
-            // 读取加密文件内容
             File encryptedFile = new File(encryptedFilePath);
             if (!encryptedFile.exists()) {
-                throw new Exception("加密文件不存在");
+                throw new Exception("Encrypted file not found");
             }
-            String encryptedContent = readFileAsString(encryptedFile);
 
-            res.type("text/plain; charset=utf-8");
-            System.out.println("Returning encrypted content for user: " + userId);
-            return encryptedContent;
+            byte[] encryptedContent;
+            try (InputStream in = new FileInputStream(encryptedFile)) {
+                encryptedContent = in.readAllBytes();
+            }
+
+            res.type("application/octet-stream");
+            res.header("Content-Disposition", "attachment; filename=\"encrypted_file.bin\"");
+            res.raw().setContentLength(encryptedContent.length);
+            res.raw().getOutputStream().write(encryptedContent);
+            res.raw().getOutputStream().flush();
+            res.raw().getOutputStream().close();
+
+            WebServer.log(userId, "View Encrypted File", "Completed", "Encrypted file retrieved successfully");
+            return null;
         } catch (Exception e) {
             res.status(500);
             res.type("application/json");
-            System.out.println("View encrypted file failed: " + e.getMessage());
-            return gson.toJson(new ResponseMessage("查看加密文件失败: " + e.getMessage()));
+            return gson.toJson(new ResponseMessage("Failed to view encrypted file: " + e.getMessage()));
         }
     }
-
     private static String getRegisteredUsers(Request req, Response res) {
         try {
-            System.out.println("Received GET request for /api/registeredUsers");
+            String userId = req.queryParams("userId") != null ? req.queryParams("userId") : "System";
+            WebServer.log(userId, "Query Registered Users", "Started", "Fetching user list");
+
             List<String> registeredUsers = AuthServer.getInstance().getRegisteredUserIds();
+            WebServer.log(userId, "Query Registered Users", "Completed", "User list retrieved successfully");
+
             res.type("application/json");
-            System.out.println("Returning registered users: " + registeredUsers);
             return gson.toJson(registeredUsers);
         } catch (Exception e) {
             res.status(500);
-            System.err.println("Error in getRegisteredUsers: " + e.getMessage());
-            e.printStackTrace();
-            return gson.toJson(new ResponseMessage("获取用户列表失败: " + e.getMessage()));
+            return gson.toJson(new ResponseMessage("Failed to get user list: " + e.getMessage()));
         }
     }
 
@@ -167,11 +170,11 @@ public class ApiController {
         try {
             String userId = req.queryParams("userId");
             String passphrase = req.queryParams("passphrase");
-            System.out.println("Attempting to view decrypted file for user: " + userId);
+            WebServer.log(userId, "Decrypt and View", "Started", "Initiating file decryption");
 
             if (!AuthServer.getInstance().isUserRegistered(userId)) {
                 res.status(400);
-                return gson.toJson(new ResponseMessage("用户未注册，请先认证"));
+                return gson.toJson(new ResponseMessage("User not registered, please authenticate first"));
             }
 
             Client client = new Client(BUCKET_NAME, LOCAL_S3_PATH, userId);
@@ -179,50 +182,64 @@ public class ApiController {
             String key1 = userId + "/rid";
             String encryptedFilePath = Constants.FILE_PATH + userId + "/secureRetrieve";
 
-            // 从 LocalS3Client 获取 sid
-            byte[] sid;
-            try {
-                final LocalS3Client s3 = LocalS3Client.Builder.standard().withBaseDirectory(LOCAL_S3_PATH).build();
-                LocalS3Client.S3Object object = s3.getObject(new LocalS3Client.GetObjectRequest(BUCKET_NAME, key0));
-                sid = object.getObjectContent().readAllBytes();
-            } catch (Exception e) {
-                throw new Exception("无法获取 sID: " + e.getMessage());
-            }
-
-            // 使用 sid 和 passphrase 计算 t
+            byte[] sid = getSid(userId);
             byte[] computedT = Utils.KDF(sid, passphrase, Constants.KDF1_SALT, Constants.MAC_KEY_LENGTH, Constants.KDF_HASH_REPETITIONS);
             byte[] registeredT = AuthServer.getInstance().usersReg.get(userId).t;
 
             if (!Arrays.equals(computedT, registeredT)) {
                 res.status(401);
-                System.out.println("Authentication failed: t values do not match");
-                return gson.toJson(new ResponseMessage("认证失败：密码错误"));
+                return gson.toJson(new ResponseMessage("Authentication failed: Incorrect passphrase"));
             }
 
-            // 认证通过后，获取 mskr
             byte[] mskr = client.take(userId, passphrase, BUCKET_NAME, key1, key0);
             if (mskr == null) {
-                throw new Exception("无法检索解密密钥");
+                throw new Exception("Failed to retrieve decryption key");
             }
 
-            // 确保加密文件存在
             File encryptedFile = new File(encryptedFilePath);
             if (!encryptedFile.exists()) {
-                throw new Exception("加密文件不存在，请先上传文件");
+                throw new Exception("Encrypted file not found, please upload first");
             }
 
-            // 解密文件
             byte[] decryptedContent = client.decryptCTRBigFileToBytes(encryptedFilePath, mskr);
-            Utils.destroyPasskey(mskr); // 清理密钥
+            Utils.destroyPasskey(mskr);
 
-            res.type("text/plain; charset=utf-8");
-            System.out.println("Returning decrypted content for user: " + userId);
-            return new String(decryptedContent, StandardCharsets.UTF_8);
+            String originalFileName;
+            File nameFile = new File(Constants.FILE_PATH + userId + "/originalFileName.txt");
+            if (nameFile.exists()) {
+                originalFileName = new String(Files.readAllBytes(nameFile.toPath()), StandardCharsets.UTF_8);
+            } else {
+                originalFileName = "decrypted_file.unknown";
+            }
+
+            String mimeType = originalFileName.endsWith(".txt") ? "text/plain" :
+                    (originalFileName.matches(".*\\.(jpg|jpeg|png|gif)$") ?
+                            "image/" + originalFileName.substring(originalFileName.lastIndexOf(".") + 1).toLowerCase() :
+                            "application/octet-stream");
+
+            res.type(mimeType);
+            res.header("Content-Disposition", "inline; filename=\"" + originalFileName + "\"");
+            res.header("X-File-Name", originalFileName);
+            res.raw().setContentLength(decryptedContent.length);
+            res.raw().getOutputStream().write(decryptedContent);
+            res.raw().getOutputStream().flush();
+            res.raw().getOutputStream().close();
+
+            WebServer.log(userId, "Decrypt and View", "Completed", "File decrypted and sent successfully");
+            return null;
         } catch (Exception e) {
             res.status(500);
             res.type("application/json");
-            System.out.println("View decrypted file failed: " + e.getMessage());
-            return gson.toJson(new ResponseMessage("解密查看失败: " + e.getMessage()));
+            return gson.toJson(new ResponseMessage("Failed to decrypt and view: " + e.getMessage()));
+        }
+    }
+    private static byte[] getSid(String userId) throws Exception {
+        try {
+            final LocalS3Client s3 = LocalS3Client.Builder.standard().withBaseDirectory(LOCAL_S3_PATH).build();
+            LocalS3Client.S3Object object = s3.getObject(new LocalS3Client.GetObjectRequest(BUCKET_NAME, userId + "/sid"));
+            return object.getObjectContent().readAllBytes();
+        } catch (Exception e) {
+            throw new Exception("Failed to retrieve SID: " + e.getMessage());
         }
     }
 
@@ -237,7 +254,7 @@ public class ApiController {
     private static String saveUploadedFile(Request req) throws Exception {
         String fileName = req.headers("X-File-Name");
         if (fileName == null) {
-            throw new Exception("未提供文件名");
+            throw new Exception("File name not provided");
         }
         String filePath = "DataFile/" + fileName;
         File file = new File(filePath);
@@ -250,7 +267,7 @@ public class ApiController {
 
     private static String readFileAsString(File file) throws IOException {
         byte[] content = Files.readAllBytes(file.toPath());
-        return Utils.bytesToHex(content); // 转换为十六进制字符串
+        return Utils.bytesToHex(content);
     }
 
     static class ResponseMessage {
